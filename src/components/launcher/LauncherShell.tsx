@@ -74,7 +74,7 @@ export function BootSplash() {
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-center gap-4 bg-background text-primary">
       <div className="size-12 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
-      <span className="font-display text-xl font-bold tracking-[0.3em]">GARDENIA</span>
+      <span className="font-display text-xl font-bold tracking-[0.3em]">MODDATHER</span>
     </div>
   );
 }

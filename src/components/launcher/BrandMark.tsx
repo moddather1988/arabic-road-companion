@@ -1,7 +1,7 @@
 /** Placeholder car emblem – swap for the owner's car brand later. */
 export function BrandMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 150 52" className={className} aria-label="Gardenia" role="img">
+    <svg viewBox="0 0 150 52" className={className} aria-label="Moddather" role="img">
       <ellipse cx="75" cy="26" rx="71" ry="22" fill="none" stroke="currentColor" strokeWidth="3" />
       <text
         x="75"
@@ -13,7 +13,7 @@ export function BrandMark({ className }: { className?: string }) {
         letterSpacing="3"
         fill="currentColor"
       >
-        GARDENIA
+        MODDATHER
       </text>
     </svg>
   );

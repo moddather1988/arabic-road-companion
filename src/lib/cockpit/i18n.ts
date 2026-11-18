@@ -117,7 +117,7 @@ const ar = {
 type Dict = typeof ar;
 
 const en: Dict = {
-  appName: "Gardenia",
+  appName: "Moddather",
   settings: "Settings",
   wifi: "Wi-Fi",
   bluetooth: "Bluetooth",

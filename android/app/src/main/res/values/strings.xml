@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Moddather</string>
+    <string name="title_activity_main">Moddather</string>
+    <string name="package_name">com.gardeniaegypt.smartcarlauncher</string>
+    <string name="custom_url_scheme">com.gardeniaegypt.smartcarlauncher</string>
+</resources>
