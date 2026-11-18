@@ -10,33 +10,102 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppsRouteImport } from './routes/apps'
+import { Route as MapsRouteImport } from './routes/maps'
+import { Route as MusicRouteImport } from './routes/music'
+import { Route as PhoneRouteImport } from './routes/phone'
+import { Route as RadioRouteImport } from './routes/radio'
+import { Route as SettingsRouteImport } from './routes/settings'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppsRoute = AppsRouteImport.update({
+  id: '/apps',
+  path: '/apps',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MapsRoute = MapsRouteImport.update({
+  id: '/maps',
+  path: '/maps',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MusicRoute = MusicRouteImport.update({
+  id: '/music',
+  path: '/music',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PhoneRoute = PhoneRouteImport.update({
+  id: '/phone',
+  path: '/phone',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RadioRoute = RadioRouteImport.update({
+  id: '/radio',
+  path: '/radio',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/apps': typeof AppsRoute
+  '/maps': typeof MapsRoute
+  '/music': typeof MusicRoute
+  '/phone': typeof PhoneRoute
+  '/radio': typeof RadioRoute
+  '/settings': typeof SettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/apps': typeof AppsRoute
+  '/maps': typeof MapsRoute
+  '/music': typeof MusicRoute
+  '/phone': typeof PhoneRoute
+  '/radio': typeof RadioRoute
+  '/settings': typeof SettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/apps': typeof AppsRoute
+  '/maps': typeof MapsRoute
+  '/music': typeof MusicRoute
+  '/phone': typeof PhoneRoute
+  '/radio': typeof RadioRoute
+  '/settings': typeof SettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    '/' | '/apps' | '/maps' | '/music' | '/phone' | '/radio' | '/settings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/apps' | '/maps' | '/music' | '/phone' | '/radio' | '/settings'
+  id:
+    | '__root__'
+    | '/'
+    | '/apps'
+    | '/maps'
+    | '/music'
+    | '/phone'
+    | '/radio'
+    | '/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppsRoute: typeof AppsRoute
+  MapsRoute: typeof MapsRoute
+  MusicRoute: typeof MusicRoute
+  PhoneRoute: typeof PhoneRoute
+  RadioRoute: typeof RadioRoute
+  SettingsRoute: typeof SettingsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +117,59 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/apps': {
+      id: '/apps'
+      path: '/apps'
+      fullPath: '/apps'
+      preLoaderRoute: typeof AppsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/maps': {
+      id: '/maps'
+      path: '/maps'
+      fullPath: '/maps'
+      preLoaderRoute: typeof MapsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/music': {
+      id: '/music'
+      path: '/music'
+      fullPath: '/music'
+      preLoaderRoute: typeof MusicRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/phone': {
+      id: '/phone'
+      path: '/phone'
+      fullPath: '/phone'
+      preLoaderRoute: typeof PhoneRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/radio': {
+      id: '/radio'
+      path: '/radio'
+      fullPath: '/radio'
+      preLoaderRoute: typeof RadioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppsRoute: AppsRoute,
+  MapsRoute: MapsRoute,
+  MusicRoute: MusicRoute,
+  PhoneRoute: PhoneRoute,
+  RadioRoute: RadioRoute,
+  SettingsRoute: SettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

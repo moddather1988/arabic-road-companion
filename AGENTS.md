@@ -28,3 +28,9 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+- The whole launcher renders client-only inside `LauncherShell` (mounted from `__root.tsx`) on a fixed-height 720-unit stage that scales to the screen; keeps layout identical across head-unit resolutions.
+- Cockpit state lives in zustand stores under `src/lib/cockpit/` (settings persisted to localStorage, drive/music/location in memory); pure rule helpers there are covered by `src/test/cockpit-rules.test.ts`.
+- The road scene is a single canvas (`RoadScene`) reading speed from the drive store per frame, so React never re-renders at 60fps.
+- All UI strings go through `useT()` in `src/lib/cockpit/i18n.ts` (Arabic default, English secondary).

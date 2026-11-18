@@ -1,23 +1,44 @@
 import { createFileRoute } from "@tanstack/react-router";
+import carRear from "@/assets/car-rear.png";
+import { Speedometer } from "@/components/launcher/Speedometer";
+import { TripPanel } from "@/components/launcher/TripPanel";
+import { PrayerPanel } from "@/components/launcher/PrayerPanel";
+import { MusicBar } from "@/components/launcher/MusicBar";
+import { useSettings } from "@/lib/cockpit/settings-store";
 
-// The home route ships no og:image, so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
-  component: Index,
+  head: () => ({
+    meta: [
+      { title: "لوحة القيادة — جاردينيا سمارت كار" },
+      { name: "description", content: "عداد سرعة، بيانات الرحلة، مواقيت الصلاة ومشغل الموسيقى في شاشة واحدة للسيارة." },
+      { property: "og:title", content: "لوحة القيادة — جاردينيا سمارت كار" },
+      { property: "og:description", content: "واجهة Car Launcher عربية بتصميم تركواز مستقبلي." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
+  component: Dashboard,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
+function Dashboard() {
+  const widgets = useSettings((s) => s.widgets);
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
+    <div className="flex h-full flex-col gap-2">
+      <div className="relative flex min-h-0 flex-1 gap-3">
+        <aside className="w-[288px] shrink-0">{widgets.prayer && <PrayerPanel />}</aside>
+        <section className="relative flex-1" aria-label="speedometer">
+          <Speedometer />
+          <img
+            src={carRear}
+            alt=""
+            width={615}
+            height={480}
+            className="animate-car-bob pointer-events-none absolute bottom-[-4px] left-1/2 w-[196px] drop-shadow-[0_14px_14px_rgb(0_0_0/0.55)]"
+          />
+        </section>
+        <aside className="w-[288px] shrink-0">{widgets.trip && <TripPanel />}</aside>
+      </div>
+      {widgets.music && <MusicBar />}
     </div>
   );
 }
