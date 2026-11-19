@@ -374,24 +374,11 @@ export const useMusic = create<MusicStore>()((set, get) => ({
         const file = valid[i];
         if (!file) continue;
 
-        alert("اسم الملف الذي استلمه التطبيق: " + file.name);
-        console.log("[MUSIC IMPORT DIAGNOSTIC]", {
-          actualFileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          generatedTitle: file.name.replace(/\.[^.]+$/, ""),
-        });
-
         const fileKey = `${file.name}::${file.size}::${file.lastModified}`;
         if (known.has(fileKey)) continue;
         known.add(fileKey);
 
         let title = file.name.replace(/\.[^.]+$/, "");
-        console.log("[MUSIC IMPORT TITLE]", {
-          fileName: file.name,
-          title,
-          fileKey,
-        });
         let artist = "فنان غير معروف";
         let album = "ألبوم غير محدد";
         let duration = 0;
