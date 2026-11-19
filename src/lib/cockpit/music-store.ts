@@ -217,22 +217,14 @@ export async function initializeMusicLibrary() {
           /sm3na|www\.|\.com|\.net|\.org|download/i.test(value);
 
         let title = track.title;
+        title = ((track.fileKey || track.id).split("::")[0] || title).replace(/\.[^.]+$/, "").trim();
         let artist = track.artist;
         let album = track.album;
 
-        if (badTag(title) || badTag(artist) || badTag(album)) {
-          const filename = ((track.fileKey || track.id).split("::")[0] || track.title)
-            .replace(/\.[^.]+$/, "")
-            .trim();
-
+        if (badTag(artist) || badTag(album)) {
           try {
             const metadata = await musicMetadata.parseBlob(blob);
 
-            if (badTag(title)) {
-              title = !badTag(metadata.common.title)
-                ? metadata.common.title!.trim()
-                : filename || title;
-            }
             if (badTag(artist)) {
               artist = !badTag(metadata.common.artist)
                 ? metadata.common.artist!.trim()
@@ -247,7 +239,6 @@ export async function initializeMusicLibrary() {
             await saveTrack({ ...track, title, artist, album, blob });
           } catch (error) {
             console.warn("Could not repair saved music metadata:", error);
-            if (badTag(title) && filename) title = filename;
           }
         }
 
@@ -398,9 +389,6 @@ export const useMusic = create<MusicStore>()((set, get) => ({
             !value?.trim() ||
             /sm3na|www\.|\.com|\.net|\.org|download/i.test(value);
 
-          title = isBadTag(metadata.common.title)
-            ? title
-            : metadata.common.title!.trim();
           artist = isBadTag(metadata.common.artist)
             ? artist
             : metadata.common.artist!.trim();
