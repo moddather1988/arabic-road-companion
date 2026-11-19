@@ -18,6 +18,7 @@ import {
   EMPTY_TRACK,
   formatClock,
   initializeMusicLibrary,
+  addStorageChangeListener,
   useMusic,
 } from "@/lib/cockpit/music-store";
 import { useT } from "@/lib/cockpit/i18n";
@@ -56,7 +57,36 @@ function MusicScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void initializeMusicLibrary();
+    let active = true;
+    let storageListener: { remove: () => Promise<void> } | null = null;
+
+    const refreshLibrary = () => {
+      if (
+        active &&
+        document.visibilityState === "visible" &&
+        useMusic.getState().libraryReady
+      ) {
+        void useMusic.getState().scanDeviceLibrary().catch((error) => {
+          console.warn("Automatic music refresh failed:", error);
+        });
+      }
+    };
+
+    void initializeMusicLibrary().then(async () => {
+      if (!active) return;
+
+      storageListener = await addStorageChangeListener(() => {
+        refreshLibrary();
+      });
+    });
+
+    document.addEventListener("visibilitychange", refreshLibrary);
+
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", refreshLibrary);
+      if (storageListener) void storageListener.remove();
+    };
   }, []);
 
   const albums = useMemo(() => {

@@ -92,7 +92,18 @@ interface DeviceMusicItem {
 
 const LocalMusic = registerPlugin<{
   scan(): Promise<{ tracks: DeviceMusicItem[] }>;
+  addListener(
+    eventName: "storageChanged",
+    listenerFunc: (event: { action?: string }) => void
+  ): Promise<{ remove: () => Promise<void> }>;
 }>("LocalMusic");
+
+export async function addStorageChangeListener(
+  listener: (event: { action?: string }) => void
+) {
+  if (!Capacitor.isNativePlatform()) return null;
+  return LocalMusic.addListener("storageChanged", listener);
+}
 
 export const EMPTY_TRACK: Track = {
   id: "empty",
@@ -420,34 +431,45 @@ function getAudio() {
   return audio;
 }
 
-async function scanNativeMusic() {
+let nativeScanPromise: Promise<void> | null = null;
+
+async function scanNativeMusic(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
+  if (nativeScanPromise) return nativeScanPromise;
 
-  const result = await LocalMusic.scan();
-  const state = useMusic.getState();
-  const currentId = state.tracks[state.index]?.id;
+  nativeScanPromise = (async () => {
+    const result = await LocalMusic.scan();
+    const state = useMusic.getState();
+    const currentId = state.tracks[state.index]?.id;
 
-  const deviceTracks: Track[] = result.tracks.map((item, i) => ({
-    id: `device:${item.id}`,
-    fileKey: `device:${item.id}`,
-    title: item.title || "ملف صوتي",
-    artist: item.artist || "فنان غير معروف",
-    album: item.album || "ألبوم غير محدد",
-    duration: Math.max(0, item.duration / 1000),
-    hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
-    url: Capacitor.convertFileSrc(item.path),
-  }));
+    const deviceTracks: Track[] = result.tracks.map((item, i) => ({
+      id: `device:${item.id}`,
+      fileKey: `device:${item.id}`,
+      title: item.title || "ملف صوتي",
+      artist: item.artist || "فنان غير معروف",
+      album: item.album || "ألبوم غير محدد",
+      duration: Math.max(0, item.duration / 1000),
+      hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
+      url: Capacitor.convertFileSrc(item.path),
+    }));
 
-  const importedTracks = state.tracks.filter(
-    (track) => !track.id.startsWith("device:")
-  );
-  const tracks = [...importedTracks, ...deviceTracks];
-  const restoredIndex = tracks.findIndex((track) => track.id === currentId);
+    const importedTracks = state.tracks.filter(
+      (track) => !track.id.startsWith("device:")
+    );
+    const tracks = [...importedTracks, ...deviceTracks];
+    const restoredIndex = tracks.findIndex((track) => track.id === currentId);
 
-  useMusic.setState({
-    tracks,
-    ...(restoredIndex >= 0 ? { index: restoredIndex } : {}),
-  });
+    useMusic.setState({
+      tracks,
+      ...(restoredIndex >= 0 ? { index: restoredIndex } : {}),
+    });
+  })();
+
+  try {
+    await nativeScanPromise;
+  } finally {
+    nativeScanPromise = null;
+  }
 }
 
 export const useMusic = create<MusicStore>()((set, get) => ({
