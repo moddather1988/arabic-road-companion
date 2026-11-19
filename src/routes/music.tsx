@@ -1,3 +1,4 @@
+import { Capacitor } from "@capacitor/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -19,6 +20,7 @@ import {
   formatClock,
   initializeMusicLibrary,
   addStorageChangeListener,
+  pickNativeMusicFiles,
   useMusic,
 } from "@/lib/cockpit/music-store";
 import { useT } from "@/lib/cockpit/i18n";
@@ -54,6 +56,8 @@ function MusicScreen() {
   const [selectedPlaylist, setSelectedPlaylist] = useState("");
   const [selectedGroup, setSelectedGroup] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [libraryMessage, setLibraryMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,12 +76,25 @@ function MusicScreen() {
       }
     };
 
+    const libraryWasAlreadyReady = useMusic.getState().libraryReady;
+
     void initializeMusicLibrary().then(async () => {
+      if (!active) return;
+
+      // Initial setup already scans once. On later page entries, scan again.
+      if (libraryWasAlreadyReady) {
+        await useMusic.getState().scanDeviceLibrary().catch((error) => {
+          console.warn("Music page entry scan failed:", error);
+        });
+      }
+
       if (!active) return;
 
       storageListener = await addStorageChangeListener(() => {
         refreshLibrary();
       });
+    }).catch((error) => {
+      console.error("Music library initialization failed:", error);
     });
 
     document.addEventListener("visibilitychange", refreshLibrary);
@@ -158,10 +175,33 @@ function MusicScreen() {
           <div className="flex flex-wrap justify-center gap-2">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              onClick={async () => {
+                if (!Capacitor.isNativePlatform()) {
+                  fileInputRef.current?.click();
+                  return;
+                }
+
+                setImporting(true);
+                setLibraryMessage("");
+                try {
+                  const files = await pickNativeMusicFiles();
+                  if (!files.length) {
+                    setLibraryMessage("لم يتم اختيار ملفات صوتية");
+                  } else {
+                    m.addFiles(files);
+                    setLibraryMessage(`تم اختيار ${files.length} ملف صوتي`);
+                  }
+                } catch (error) {
+                  console.error("Native music picker failed:", error);
+                  setLibraryMessage("تعذر فتح مدير الملفات. راجع سجل التطبيق.");
+                } finally {
+                  setImporting(false);
+                }
+              }}
               className="press rounded-xl bg-primary/15 px-5 py-3 text-center font-bold text-primary hover:bg-primary/25"
             >
-              + اختيار ملفات الموسيقى
+              {importing ? "جارٍ استيراد الملفات..." : "+ اختيار ملفات الموسيقى"}
             </button>
             <button
               type="button"
@@ -170,8 +210,14 @@ function MusicScreen() {
                 setScanning(true);
                 try {
                   await m.scanDeviceLibrary();
+                  setLibraryMessage(`اكتمل الفحص. عدد الأغاني: ${useMusic.getState().tracks.length}`);
                 } catch (error) {
                   console.error("Music scan failed:", error);
+                  setLibraryMessage(
+                    error instanceof Error
+                      ? `فشل فحص المكتبة: ${error.message}`
+                      : "فشل فحص المكتبة. تحقق من صلاحية الملفات."
+                  );
                 } finally {
                   setScanning(false);
                 }
@@ -198,6 +244,11 @@ function MusicScreen() {
               ? `${m.tracks.length} أغنية في المكتبة`
               : "جارٍ تحميل مكتبتك..."}
           </div>
+          {libraryMessage && (
+            <div role="status" className="mt-1 text-xs text-primary">
+              {libraryMessage}
+            </div>
+          )}
         </div>
 
         <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl bg-background/20 p-3">

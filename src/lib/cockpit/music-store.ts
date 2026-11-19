@@ -92,6 +92,9 @@ interface DeviceMusicItem {
 
 const LocalMusic = registerPlugin<{
   scan(): Promise<{ tracks: DeviceMusicItem[] }>;
+  pickFiles(): Promise<{
+    files?: Array<{ path: string; name: string; size: number }>;
+  }>;
   addListener(
     eventName: "storageChanged",
     listenerFunc: (event: { action?: string }) => void
@@ -103,6 +106,30 @@ export async function addStorageChangeListener(
 ) {
   if (!Capacitor.isNativePlatform()) return null;
   return LocalMusic.addListener("storageChanged", listener);
+}
+
+export async function pickNativeMusicFiles(): Promise<File[]> {
+  if (!Capacitor.isNativePlatform()) return [];
+
+  const result = await LocalMusic.pickFiles();
+  const picked: File[] = [];
+
+  for (const item of result.files ?? []) {
+    try {
+      const response = await fetch(Capacitor.convertFileSrc(item.path));
+      if (!response.ok) throw new Error(`تعذر قراءة الملف: ${item.name}`);
+
+      const blob = await response.blob();
+      picked.push(new File([blob], item.name, {
+        type: blob.type || "audio/*",
+        lastModified: Date.now(),
+      }));
+    } catch (error) {
+      console.error("Could not import selected audio:", item.name, error);
+    }
+  }
+
+  return picked;
 }
 
 export const EMPTY_TRACK: Track = {

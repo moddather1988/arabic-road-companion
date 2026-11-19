@@ -1,5 +1,15 @@
 package com.gardeniaegypt.smartcarlauncher;
 
+import com.getcapacitor.annotation.ActivityCallback;
+
+import androidx.activity.result.ActivityResult;
+
+import android.provider.OpenableColumns;
+
+import android.media.MediaMetadataRetriever;
+
+import android.app.Activity;
+
 import android.Manifest;
 import android.content.ContentUris;
 import android.content.BroadcastReceiver;
@@ -91,6 +101,138 @@ public class LocalMusicPlugin extends Plugin {
         }
     }
 
+
+    @PluginMethod
+    public void pickFiles(PluginCall call) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("audio/*");
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            startActivityForResult(call, intent, "filesPicked");
+        } catch (Exception error) {
+            call.reject("تعذر فتح مدير ملفات Android", error);
+        }
+    }
+
+    @ActivityCallback
+    public void filesPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+            call.resolve(new JSObject());
+            return;
+        }
+
+        Intent data = result.getData();
+        android.content.ClipData clip = data.getClipData();
+        java.util.ArrayList<Uri> selected = new java.util.ArrayList<>();
+
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri uri = clip.getItemAt(i).getUri();
+                if (uri != null) selected.add(uri);
+            }
+        } else if (data.getData() != null) {
+            selected.add(data.getData());
+        }
+
+        JSArray files = new JSArray();
+        File directory = new File(getContext().getFilesDir(), "imported-music");
+        if (!directory.exists() && !directory.mkdirs()) {
+            call.reject("تعذر إنشاء مجلد ملفات الموسيقى");
+            return;
+        }
+
+        int index = 0;
+        for (Uri uri : selected) {
+            String displayName = "audio-" + (++index);
+            long reportedSize = 0;
+
+            try (Cursor cursor = getContext().getContentResolver().query(
+                uri,
+                new String[] { OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE },
+                null, null, null
+            )) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                    if (nameIndex >= 0 && !cursor.isNull(nameIndex)) {
+                        displayName = cursor.getString(nameIndex);
+                    }
+                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                        reportedSize = cursor.getLong(sizeIndex);
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            String safeName = displayName.replaceAll("[^A-Za-z0-9._-]", "_");
+            if (safeName.isEmpty()) safeName = "audio-" + index;
+            File output = new File(
+                directory,
+                System.currentTimeMillis() + "-" + index + "-" + safeName
+            );
+
+            try (
+                InputStream input = getContext().getContentResolver().openInputStream(uri);
+                FileOutputStream stream = new FileOutputStream(output)
+            ) {
+                if (input == null) {
+                    output.delete();
+                    continue;
+                }
+
+                byte[] buffer = new byte[32768];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    stream.write(buffer, 0, count);
+                }
+            } catch (Exception copyError) {
+                output.delete();
+                continue;
+            }
+
+            JSObject item = new JSObject();
+            item.put("name", displayName);
+            item.put("path", output.getAbsolutePath());
+            item.put("size", reportedSize > 0 ? reportedSize : output.length());
+
+            try {
+                MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+                try {
+                    retriever.setDataSource(getContext(), Uri.fromFile(output));
+                    String duration = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_DURATION
+                    );
+                    String title = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_TITLE
+                    );
+                    String artist = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_ARTIST
+                    );
+                    String album = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_ALBUM
+                    );
+
+                    item.put("duration", duration == null ? 0 : Long.parseLong(duration));
+                    item.put("title", title == null ? "" : title);
+                    item.put("artist", artist == null ? "" : artist);
+                    item.put("album", album == null ? "" : album);
+                } finally {
+                    retriever.release();
+                }
+            } catch (Exception ignored) {
+                item.put("duration", 0);
+            }
+
+            files.put(item);
+        }
+
+        JSObject response = new JSObject();
+        response.put("files", files);
+        call.resolve(response);
+    }
+
     @PluginMethod
     public void scan(PluginCall call) {
         String alias = Build.VERSION.SDK_INT >= 33 ? "modernAudio" : "legacyAudio";
@@ -155,7 +297,7 @@ public class LocalMusicPlugin extends Plugin {
                 try (Cursor cursor = getContext().getContentResolver().query(
                     collection,
                     columns,
-                    MediaStore.Audio.Media.IS_MUSIC + " != 0",
+                    null,
                     null,
                     MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC"
                 )) {
