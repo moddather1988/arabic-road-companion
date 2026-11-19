@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import * as musicMetadata from "music-metadata-browser";
 
 export interface Track {
@@ -36,6 +37,8 @@ interface PlaybackState {
   radioStationId?: string;
   radioStationName?: string;
   radioStreamUrl?: string;
+  repeatMode?: "off" | "all" | "one";
+  shuffle?: boolean;
 }
 
 interface MusicStore {
@@ -49,7 +52,12 @@ interface MusicStore {
   favorites: string[];
   playlists: MusicPlaylist[];
   libraryReady: boolean;
+  repeatMode: "off" | "all" | "one";
+  shuffle: boolean;
   addFiles: (files: File[]) => void;
+  scanDeviceLibrary: () => Promise<void>;
+  toggleShuffle: () => void;
+  cycleRepeat: () => void;
   play: (i?: number) => void;
   playRadio: (station: RadioStation) => void;
   toggle: () => void;
@@ -72,6 +80,19 @@ let audio: HTMLAudioElement | null = null;
 let libraryInit: Promise<void> | null = null;
 let pendingResumePosition = 0;
 let lastPositionSave = 0;
+
+interface DeviceMusicItem {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  path: string;
+}
+
+const LocalMusic = registerPlugin<{
+  scan(): Promise<{ tracks: DeviceMusicItem[] }>;
+}>("LocalMusic");
 
 export const EMPTY_TRACK: Track = {
   id: "empty",
@@ -151,6 +172,8 @@ async function savePlaybackState() {
       position: state.position,
       volume: state.volume,
       source: state.source,
+      repeatMode: state.repeatMode,
+      shuffle: state.shuffle,
       ...(state.radioStation
         ? {
             radioStationId: state.radioStation.id,
@@ -285,6 +308,8 @@ export async function initializeMusicLibrary() {
         index,
         position,
         volume,
+        repeatMode: playback?.repeatMode ?? "off",
+        shuffle: playback?.shuffle ?? false,
         radioStation:
           playback?.radioStationId &&
           playback?.radioStationName &&
@@ -305,6 +330,18 @@ export async function initializeMusicLibrary() {
         playlists: savedState?.playlists ?? [],
         libraryReady: true,
       });
+
+      try {
+        await scanNativeMusic();
+        if (playback?.lastTrackId) {
+          const restored = useMusic.getState().tracks.findIndex(
+            (track) => track.id === playback.lastTrackId
+          );
+          if (restored >= 0) useMusic.setState({ index: restored });
+        }
+      } catch (error) {
+        console.warn("Device music scan unavailable:", error);
+      }
     } catch (error) {
       console.error("Music library restore failed:", error);
       useMusic.setState({ libraryReady: true });
@@ -383,6 +420,36 @@ function getAudio() {
   return audio;
 }
 
+async function scanNativeMusic() {
+  if (!Capacitor.isNativePlatform()) return;
+
+  const result = await LocalMusic.scan();
+  const state = useMusic.getState();
+  const currentId = state.tracks[state.index]?.id;
+
+  const deviceTracks: Track[] = result.tracks.map((item, i) => ({
+    id: `device:${item.id}`,
+    fileKey: `device:${item.id}`,
+    title: item.title || "ملف صوتي",
+    artist: item.artist || "فنان غير معروف",
+    album: item.album || "ألبوم غير محدد",
+    duration: Math.max(0, item.duration / 1000),
+    hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
+    url: Capacitor.convertFileSrc(item.path),
+  }));
+
+  const importedTracks = state.tracks.filter(
+    (track) => !track.id.startsWith("device:")
+  );
+  const tracks = [...importedTracks, ...deviceTracks];
+  const restoredIndex = tracks.findIndex((track) => track.id === currentId);
+
+  useMusic.setState({
+    tracks,
+    ...(restoredIndex >= 0 ? { index: restoredIndex } : {}),
+  });
+}
+
 export const useMusic = create<MusicStore>()((set, get) => ({
   tracks: [],
   index: 0,
@@ -394,6 +461,16 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   favorites: [],
   playlists: [],
   libraryReady: false,
+  repeatMode: "off",
+  shuffle: false,
+
+  scanDeviceLibrary: scanNativeMusic,
+  toggleShuffle: () => set((state) => ({ shuffle: !state.shuffle })),
+  cycleRepeat: () => set((state) => ({
+    repeatMode:
+      state.repeatMode === "off" ? "all" :
+      state.repeatMode === "all" ? "one" : "off",
+  })),
 
   addFiles: (files) => {
     const valid = files.filter(
@@ -556,6 +633,35 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   next: () => {
     const state = get();
     if (state.source === "radio" || !state.tracks.length) return;
+
+    const player = getAudio();
+
+    if (state.repeatMode === "one" && player) {
+      player.currentTime = 0;
+      void player.play().catch(() => set({ playing: false }));
+      set({ position: 0 });
+      return;
+    }
+
+    if (state.shuffle && state.tracks.length > 1) {
+      let nextIndex = state.index;
+      while (nextIndex === state.index) {
+        nextIndex = Math.floor(Math.random() * state.tracks.length);
+      }
+      get().play(nextIndex);
+      return;
+    }
+
+    if (state.index === state.tracks.length - 1 && state.repeatMode === "off") {
+      if (player) {
+        player.pause();
+        player.currentTime = 0;
+      }
+      set({ playing: false, position: 0 });
+      void savePlaybackState();
+      return;
+    }
+
     get().play((state.index + 1) % state.tracks.length);
   },
 

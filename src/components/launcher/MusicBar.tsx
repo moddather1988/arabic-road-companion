@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
+import { useRef } from "react";
+import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, Repeat, Repeat1, Shuffle } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { AlbumArt } from "./AlbumArt";
 import { EMPTY_TRACK, formatClock, useMusic } from "@/lib/cockpit/music-store";
@@ -74,6 +75,7 @@ export function Progress() {
 export function MusicBar() {
   const { t, dir } = useT();
   const m = useMusic();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const track = m.tracks[m.index] ?? EMPTY_TRACK;
   const isRadio = m.source === "radio";
   const displayTitle = isRadio
@@ -93,7 +95,34 @@ export function MusicBar() {
         </div>
       </Link>
 
-      <div className="flex flex-1 items-center gap-4">
+      <div className="flex flex-1 items-center gap-2">
+        {m.source !== "radio" && (
+          <>
+            <button
+              type="button"
+              onClick={m.toggleShuffle}
+              title={m.shuffle ? "إيقاف التشغيل العشوائي" : "تشغيل عشوائي"}
+              aria-label="التشغيل العشوائي"
+              aria-pressed={m.shuffle}
+              className={cn("press rounded-lg p-2", m.shuffle ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-primary")}
+            >
+              <Shuffle className="size-5" />
+            </button>
+            <button
+              type="button"
+              onClick={m.cycleRepeat}
+              title={m.repeatMode === "off" ? "التكرار مغلق" : m.repeatMode === "all" ? "تكرار كل الأغاني" : "تكرار الأغنية الحالية"}
+              aria-label="تغيير وضع التكرار"
+              aria-pressed={m.repeatMode !== "off"}
+              className={cn("press relative rounded-lg p-2", m.repeatMode !== "off" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-primary")}
+            >
+              {m.repeatMode === "one" ? <Repeat1 className="size-5" /> : <Repeat className="size-5" />}
+              {m.repeatMode !== "off" && (
+                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary" />
+              )}
+            </button>
+          </>
+        )}
         <Transport />
         <div className="flex flex-1 flex-col gap-1">
           <div className="flex h-3 items-center justify-center gap-[3px]" aria-hidden>
@@ -117,19 +146,24 @@ export function MusicBar() {
       </div>
 
       <div className="flex items-center gap-1 rounded-xl bg-background/40 p-1 text-sm font-bold">
-        <label className="press cursor-pointer rounded-lg bg-primary/20 px-3 py-1.5 text-primary">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="press rounded-lg bg-primary/20 px-3 py-1.5 text-primary"
+        >
           {t("library")}
-          <input
-            type="file"
-            accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac"
-            multiple
-            className="hidden"
-            onChange={(event) => {
-              m.addFiles(Array.from(event.currentTarget.files ?? []));
-              event.currentTarget.value = "";
-            }}
-          />
-        </label>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac"
+          multiple
+          className="sr-only"
+          onChange={(event) => {
+            m.addFiles(Array.from(event.currentTarget.files ?? []));
+            event.currentTarget.value = "";
+          }}
+        />
         <Link to="/radio" className="press rounded-lg px-3 py-1.5 text-foreground/80 hover:text-primary">
           {t("radio")}
         </Link>

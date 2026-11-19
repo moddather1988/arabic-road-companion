@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Disc3,
@@ -7,6 +7,7 @@ import {
   Music2,
   Plus,
   Search,
+  RefreshCw,
   Users,
   X,
 } from "lucide-react";
@@ -51,6 +52,8 @@ function MusicScreen() {
   const [playlistName, setPlaylistName] = useState("");
   const [selectedPlaylist, setSelectedPlaylist] = useState("");
   const [selectedGroup, setSelectedGroup] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void initializeMusicLibrary();
@@ -122,19 +125,44 @@ function MusicScreen() {
             <Progress />
           </div>
           <Transport big />
-          <label className="press cursor-pointer rounded-xl bg-primary/15 px-5 py-3 text-center font-bold text-primary hover:bg-primary/25">
-            + اختيار ملفات الموسيقى
+          <div className="flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="press rounded-xl bg-primary/15 px-5 py-3 text-center font-bold text-primary hover:bg-primary/25"
+            >
+              + اختيار ملفات الموسيقى
+            </button>
+            <button
+              type="button"
+              disabled={scanning}
+              onClick={async () => {
+                setScanning(true);
+                try {
+                  await m.scanDeviceLibrary();
+                } catch (error) {
+                  console.error("Music scan failed:", error);
+                } finally {
+                  setScanning(false);
+                }
+              }}
+              className="press flex items-center gap-2 rounded-xl bg-background/50 px-4 py-3 font-bold text-foreground disabled:opacity-50"
+            >
+              <RefreshCw className={cn("size-4", scanning && "animate-spin")} />
+              {scanning ? "جارٍ الفحص..." : "تحديث المكتبة"}
+            </button>
             <input
+              ref={fileInputRef}
               type="file"
               accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus,.wma"
               multiple
-              className="hidden"
+              className="sr-only"
               onChange={(event) => {
                 m.addFiles(Array.from(event.currentTarget.files ?? []));
                 event.currentTarget.value = "";
               }}
             />
-          </label>
+          </div>
           <div className="text-xs text-muted-foreground">
             {m.libraryReady
               ? `${m.tracks.length} أغنية في المكتبة`
