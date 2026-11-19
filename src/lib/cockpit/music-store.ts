@@ -1,21 +1,24 @@
 import { create } from "zustand";
 
 export interface Track {
+  id: string;
   title: string;
   artist: string;
+  album: string;
   duration: number;
   hue: number;
   url?: string;
 }
 
-export const EMPTY_TRACK: Track = {
-  title: "اختر ملفًا موسيقيًا",
-  artist: "لا توجد أغنية قيد التشغيل",
-  duration: 0,
-  hue: 188,
-};
+export interface MusicPlaylist {
+  id: string;
+  name: string;
+  trackIds: string[];
+}
 
-export const DEMO_TRACKS: Track[] = [];
+interface SavedTrack extends Omit<Track, "url"> {
+  blob: Blob;
+}
 
 interface MusicStore {
   tracks: Track[];
@@ -24,6 +27,9 @@ interface MusicStore {
   position: number;
   volume: number;
   source: "library" | "radio";
+  favorites: string[];
+  playlists: MusicPlaylist[];
+  libraryReady: boolean;
   addFiles: (files: File[]) => void;
   play: (i?: number) => void;
   toggle: () => void;
@@ -32,10 +38,130 @@ interface MusicStore {
   seek: (sec: number) => void;
   setVolume: (v: number) => void;
   setSource: (s: "library" | "radio") => void;
+  toggleFavorite: (id: string) => void;
+  createPlaylist: (name: string) => void;
+  addToPlaylist: (playlistId: string, trackId: string) => void;
+  removeFromPlaylist: (playlistId: string, trackId: string) => void;
   tick: (dt: number) => void;
 }
 
+const DB_NAME = "moddather-music-library";
+const DB_VERSION = 1;
+
 let audio: HTMLAudioElement | null = null;
+let libraryInit: Promise<void> | null = null;
+
+function openLibrary(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("tracks")) {
+        db.createObjectStore("tracks", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("settings")) {
+        db.createObjectStore("settings", { keyPath: "key" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveTrack(record: SavedTrack) {
+  const db = await openLibrary();
+  const tx = db.transaction("tracks", "readwrite");
+  tx.objectStore("tracks").put(record);
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function saveLibraryState(favorites: string[], playlists: MusicPlaylist[]) {
+  const db = await openLibrary();
+  const tx = db.transaction("settings", "readwrite");
+  tx.objectStore("settings").put({
+    key: "library-state",
+    favorites,
+    playlists,
+  });
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  db.close();
+}
+
+export async function initializeMusicLibrary() {
+  if (libraryInit) return libraryInit;
+
+  libraryInit = (async () => {
+    if (typeof indexedDB === "undefined") {
+      useMusic.setState({ libraryReady: true });
+      return;
+    }
+
+    try {
+      const db = await openLibrary();
+      const tx = db.transaction(["tracks", "settings"], "readonly");
+      const savedTracks = await requestResult(
+        tx.objectStore("tracks").getAll() as IDBRequest<SavedTrack[]>,
+      );
+      const savedState = await requestResult(
+        tx.objectStore("settings").get("library-state"),
+      ) as { favorites?: string[]; playlists?: MusicPlaylist[] } | undefined;
+      db.close();
+
+      const tracks = savedTracks.map(({ blob, ...track }) => ({
+        ...track,
+        url: URL.createObjectURL(blob),
+      }));
+
+      useMusic.setState({
+        tracks,
+        favorites: savedState?.favorites ?? [],
+        playlists: savedState?.playlists ?? [],
+        libraryReady: true,
+      });
+    } catch (error) {
+      console.error("Music library restore failed:", error);
+      useMusic.setState({ libraryReady: true });
+    }
+  })();
+
+  return libraryInit;
+}
+
+async function updateSavedDuration(id: string, duration: number) {
+  try {
+    const db = await openLibrary();
+    const tx = db.transaction("tracks", "readwrite");
+    const store = tx.objectStore("tracks");
+    const record = await requestResult(store.get(id)) as SavedTrack | undefined;
+    if (record) store.put({ ...record, duration });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  } catch (error) {
+    console.warn("Could not update saved track duration:", error);
+  }
+}
 
 function getAudio() {
   if (typeof Audio === "undefined") return null;
@@ -51,17 +177,14 @@ function getAudio() {
     audio.addEventListener("loadedmetadata", () => {
       if (!audio) return;
       const state = useMusic.getState();
+      const current = state.tracks[state.index];
+      if (!current) return;
+
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
       const tracks = [...state.tracks];
-      if (tracks[state.index]) {
-        const current = tracks[state.index];
-      if (current) {
-        tracks[state.index] = {
-          ...current,
-          duration: Number.isFinite(audio.duration) ? audio.duration : 0,
-        };
-      }
-        useMusic.setState({ tracks });
-      }
+      tracks[state.index] = { ...current, duration };
+      useMusic.setState({ tracks });
+      void updateSavedDuration(current.id, duration);
     });
 
     audio.addEventListener("play", () => useMusic.setState({ playing: true }));
@@ -72,6 +195,17 @@ function getAudio() {
   return audio;
 }
 
+export const EMPTY_TRACK: Track = {
+  id: "empty",
+  title: "اختر ملفًا موسيقيًا",
+  artist: "بيانات الفنان غير متاحة",
+  album: "ألبوم غير محدد",
+  duration: 0,
+  hue: 188,
+};
+
+export const DEMO_TRACKS: Track[] = [];
+
 export const useMusic = create<MusicStore>()((set, get) => ({
   tracks: [],
   index: 0,
@@ -79,6 +213,9 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   position: 0,
   volume: 60,
   source: "library",
+  favorites: [],
+  playlists: [],
+  libraryReady: false,
 
   addFiles: (files) => {
     const valid = files.filter(
@@ -89,29 +226,63 @@ export const useMusic = create<MusicStore>()((set, get) => ({
 
     if (!valid.length) return;
 
-    const added = valid.map((file, i) => ({
-      title: file.name.replace(/\.[^.]+$/, ""),
-      artist: "ملف من الجهاز",
-      duration: 0,
-      hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
-      url: URL.createObjectURL(file),
-    }));
+    void (async () => {
+      const startIndex = get().tracks.length;
+      const added: Track[] = [];
 
-    const startIndex = get().tracks.length;
-    set((state) => ({
-      tracks: [...state.tracks, ...added],
-      index: startIndex,
-      position: 0,
-      source: "library",
-    }));
+      for (let i = 0; i < valid.length; i++) {
+        const file = valid[i];
+        if (!file) continue;
 
-    get().play(startIndex);
+        const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${file.name}-${file.size}-${file.lastModified}`;
+
+        const track: Track = {
+          id,
+          title: file.name.replace(/\.[^.]+$/, ""),
+          artist: "فنان غير محدد",
+          album: "ألبوم غير محدد",
+          duration: 0,
+          hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
+          url: URL.createObjectURL(file),
+        };
+
+        try {
+          await saveTrack({
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            duration: track.duration,
+            hue: track.hue,
+            blob: file,
+          });
+        } catch (error) {
+          console.error("Could not save music file:", error);
+        }
+
+        added.push(track);
+      }
+
+      if (!added.length) return;
+
+      set((state) => ({
+        tracks: [...state.tracks, ...added],
+        index: startIndex,
+        position: 0,
+        source: "library",
+      }));
+
+      get().play(startIndex);
+    })();
   },
 
   play: (i) => {
     const state = get();
     const index = i ?? state.index;
     const track = state.tracks[index];
+
     if (!track?.url) {
       set({ playing: false });
       return;
@@ -149,8 +320,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   next: () => {
     const state = get();
     if (!state.tracks.length) return;
-    const nextIndex = (state.index + 1) % state.tracks.length;
-    get().play(nextIndex);
+    get().play((state.index + 1) % state.tracks.length);
   },
 
   prev: () => {
@@ -162,9 +332,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
       player.currentTime = 0;
       set({ position: 0 });
     } else {
-      const previousIndex =
-        (state.index - 1 + state.tracks.length) % state.tracks.length;
-      get().play(previousIndex);
+      get().play((state.index - 1 + state.tracks.length) % state.tracks.length);
     }
   },
 
@@ -183,6 +351,51 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   },
 
   setSource: (source) => set({ source }),
+
+  toggleFavorite: (id) => {
+    const favorites = get().favorites.includes(id)
+      ? get().favorites.filter((item) => item !== id)
+      : [...get().favorites, id];
+
+    set({ favorites });
+    void saveLibraryState(favorites, get().playlists);
+  },
+
+  createPlaylist: (name) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+
+    const playlist: MusicPlaylist = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: cleanName,
+      trackIds: [],
+    };
+
+    const playlists = [...get().playlists, playlist];
+    set({ playlists });
+    void saveLibraryState(get().favorites, playlists);
+  },
+
+  addToPlaylist: (playlistId, trackId) => {
+    const playlists = get().playlists.map((playlist) =>
+      playlist.id === playlistId && !playlist.trackIds.includes(trackId)
+        ? { ...playlist, trackIds: [...playlist.trackIds, trackId] }
+        : playlist,
+    );
+    set({ playlists });
+    void saveLibraryState(get().favorites, playlists);
+  },
+
+  removeFromPlaylist: (playlistId, trackId) => {
+    const playlists = get().playlists.map((playlist) =>
+      playlist.id === playlistId
+        ? { ...playlist, trackIds: playlist.trackIds.filter((id) => id !== trackId) }
+        : playlist,
+    );
+    set({ playlists });
+    void saveLibraryState(get().favorites, playlists);
+  },
+
   tick: () => {},
 }));
 
