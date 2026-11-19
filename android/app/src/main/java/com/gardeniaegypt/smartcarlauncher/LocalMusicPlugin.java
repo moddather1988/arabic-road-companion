@@ -1,5 +1,8 @@
 package com.gardeniaegypt.smartcarlauncher;
 
+import androidx.core.content.ContextCompat;
+import android.util.Log;
+import android.content.pm.PackageManager;
 import com.getcapacitor.annotation.ActivityCallback;
 
 import androidx.activity.result.ActivityResult;
@@ -104,14 +107,30 @@ public class LocalMusicPlugin extends Plugin {
 
     @PluginMethod
     public void pickFiles(PluginCall call) {
+        Intent documentIntent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        documentIntent.addCategory(Intent.CATEGORY_OPENABLE);
+        documentIntent.setType("audio/*");
+        documentIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        documentIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
         try {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("audio/*");
-            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            startActivityForResult(call, intent, "filesPicked");
-        } catch (Exception error) {
-            call.reject("تعذر فتح مدير ملفات Android", error);
+            startActivityForResult(call, documentIntent, "filesPicked");
+            return;
+        } catch (Exception documentError) {
+            Log.w("LocalMusicPlugin", "ACTION_OPEN_DOCUMENT failed; trying ACTION_GET_CONTENT", documentError);
+        }
+
+        try {
+            Intent contentIntent = new Intent(Intent.ACTION_GET_CONTENT);
+            contentIntent.addCategory(Intent.CATEGORY_OPENABLE);
+            contentIntent.setType("audio/*");
+            contentIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            contentIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(call, contentIntent, "filesPicked");
+        } catch (Exception contentError) {
+            Log.e("LocalMusicPlugin", "Both Android file picker actions failed", contentError);
+            String reason = contentError.getClass().getSimpleName() + ": " + contentError.getMessage();
+            call.reject("تعذر فتح مدير الملفات. سبب Android: " + reason, contentError);
         }
     }
 
@@ -233,11 +252,20 @@ public class LocalMusicPlugin extends Plugin {
         call.resolve(response);
     }
 
+    private boolean hasAudioPermission() {
+        String permission = Build.VERSION.SDK_INT >= 33
+            ? Manifest.permission.READ_MEDIA_AUDIO
+            : Manifest.permission.READ_EXTERNAL_STORAGE;
+
+        return ContextCompat.checkSelfPermission(getContext(), permission)
+            == PackageManager.PERMISSION_GRANTED;
+    }
+
     @PluginMethod
     public void scan(PluginCall call) {
         String alias = Build.VERSION.SDK_INT >= 33 ? "modernAudio" : "legacyAudio";
 
-        if (!hasPermission(alias)) {
+        if (!hasAudioPermission()) {
             requestPermissionForAlias(alias, call, "permissionResult");
             return;
         }
@@ -249,7 +277,7 @@ public class LocalMusicPlugin extends Plugin {
     private void permissionResult(PluginCall call) {
         String alias = Build.VERSION.SDK_INT >= 33 ? "modernAudio" : "legacyAudio";
 
-        if (!hasPermission(alias)) {
+        if (!hasAudioPermission()) {
             call.reject("يلزم السماح للتطبيق بالوصول إلى ملفات الموسيقى");
             return;
         }
@@ -369,7 +397,9 @@ public class LocalMusicPlugin extends Plugin {
             call.resolve(result);
 
         } catch (Exception error) {
-            call.reject("حدث خطأ أثناء فحص ملفات الموسيقى", error);
+            Log.e("LocalMusicPlugin", "MediaStore music scan failed", error);
+            String reason = error.getClass().getSimpleName() + ": " + error.getMessage();
+            call.reject("فشل فحص مكتبة الموسيقى: " + reason, error);
         }
     }
 }
