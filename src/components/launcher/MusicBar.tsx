@@ -17,9 +17,11 @@ export function Transport({ big = false }: { big?: boolean }) {
 
   return (
     <div className="flex items-center gap-3">
-      <button className="press rounded-full p-2 text-foreground hover:text-primary" onClick={m.prev} aria-label={t("previous")}>
-        <Prev className={sz} />
-      </button>
+      {m.source !== "radio" && (
+        <button className="press rounded-full p-2 text-foreground hover:text-primary" onClick={m.prev} aria-label={t("previous")}>
+          <Prev className={sz} />
+        </button>
+      )}
       <button
         className={cn(
           "press flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[var(--shadow-glow)]",
@@ -30,9 +32,11 @@ export function Transport({ big = false }: { big?: boolean }) {
       >
         {m.playing ? <Pause className={sz} /> : <Play className={sz} />}
       </button>
-      <button className="press rounded-full p-2 text-foreground hover:text-primary" onClick={m.next} aria-label={t("next")}>
-        <Next className={sz} />
-      </button>
+      {m.source !== "radio" && (
+        <button className="press rounded-full p-2 text-foreground hover:text-primary" onClick={m.next} aria-label={t("next")}>
+          <Next className={sz} />
+        </button>
+      )}
     </div>
   );
 }
@@ -45,16 +49,24 @@ export function Progress() {
   return (
     <div className="flex w-full items-center gap-2 text-[11px] font-medium text-muted-foreground tnum">
       <span dir="ltr">{formatClock(m.position)}</span>
-      <Slider
-        dir={dir}
-        value={[Math.min(m.position, track.duration || 1)]}
-        max={Math.max(track.duration, 1)}
-        step={1}
-        onValueChange={([v]) => m.seek(v ?? 0)}
-        className="flex-1"
-        disabled={!track.duration}
-      />
-      <span dir="ltr">{formatClock(track.duration)}</span>
+      {m.source === "radio" ? (
+        <div className="flex-1 text-center text-xs font-bold text-primary">
+          بث مباشر عبر الإنترنت
+        </div>
+      ) : (
+        <>
+          <Slider
+            dir={dir}
+            value={[Math.min(m.position, track.duration || 1)]}
+            max={Math.max(track.duration, 1)}
+            step={1}
+            onValueChange={([v]) => m.seek(v ?? 0)}
+            className="flex-1"
+            disabled={!track.duration}
+          />
+          <span dir="ltr">{formatClock(track.duration)}</span>
+        </>
+      )}
     </div>
   );
 }
@@ -63,14 +75,21 @@ export function MusicBar() {
   const { t, dir } = useT();
   const m = useMusic();
   const track = m.tracks[m.index] ?? EMPTY_TRACK;
+  const isRadio = m.source === "radio";
+  const displayTitle = isRadio
+    ? m.radioStation?.name ?? "راديو الإنترنت"
+    : track.title;
+  const displayArtist = isRadio
+    ? "بث مباشر عبر الإنترنت"
+    : track.artist;
 
   return (
     <div className="glass flex h-[64px] shrink-0 items-center gap-4 rounded-2xl px-3 animate-screen-in">
-      <Link to="/music" className="press flex w-[230px] items-center gap-3">
+      <Link to={isRadio ? "/radio" : "/music"} className="press flex w-[230px] items-center gap-3">
         <AlbumArt hue={track.hue} className="size-11" />
         <div className="min-w-0">
-          <div className="truncate text-[15px] font-bold">{track.title}</div>
-          <div className="truncate text-[11px] text-muted-foreground">{track.artist}</div>
+          <div className="truncate text-[15px] font-bold">{displayTitle}</div>
+          <div className="truncate text-[11px] text-muted-foreground">{displayArtist}</div>
         </div>
       </Link>
 

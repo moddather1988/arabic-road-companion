@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Radio } from "lucide-react";
-import { useState } from "react";
+import { Pause, Play, Radio, Wifi } from "lucide-react";
 import { ScreenShell } from "@/components/launcher/ScreenShell";
-import { Slider } from "@/components/ui/slider";
+import { useMusic, type RadioStation } from "@/lib/cockpit/music-store";
 import { useT } from "@/lib/cockpit/i18n";
 import { cn } from "@/lib/utils";
 
@@ -10,65 +9,126 @@ export const Route = createFileRoute("/radio")({
   head: () => ({
     meta: [
       { title: "الراديو — جاردينيا سمارت كار" },
-      { name: "description", content: "محطات FM في واجهة السيارة." },
+      { name: "description", content: "استمع إلى محطات الراديو عبر الإنترنت." },
       { property: "og:title", content: "الراديو — جاردينيا سمارت كار" },
-      { property: "og:description", content: "موالف FM ومحطات مفضلة." },
+      { property: "og:description", content: "محطات راديو مباشرة." },
     ],
   }),
   component: RadioScreen,
 });
 
-const STATIONS = [
-  { name: "راديو مصر", f: 88.7 },
-  { name: "ميجا إف إم", f: 92.7 },
-  { name: "إذاعة القرآن الكريم", f: 98.2 },
-  { name: "نجوم إف إم", f: 100.6 },
-  { name: "نايل إف إم", f: 104.2 },
-  { name: "نغم إف إم", f: 105.3 },
+const STATIONS: RadioStation[] = [
+  {
+    id: "mishary-alafasi",
+    name: "إذاعة مشاري العفاسي",
+    url: "https://qurango.net/radio/mishary_alafasi",
+  },
+  {
+    id: "quran-cairo",
+    name: "إذاعة القرآن الكريم من القاهرة",
+    url: "https://stream.radiojar.com/8s5u5tpdtwzuv",
+  },
+  {
+    id: "om-kalthoum",
+    name: "راديو أم كلثوم",
+    url: "https://stream.zeno.fm/zsgrfxg71s8uv",
+  },
 ];
 
 function RadioScreen() {
   const { t } = useT();
-  const [freq, setFreq] = useState(100.6);
-  const current = STATIONS.find((s) => Math.abs(s.f - freq) < 0.05);
-  const stepBy = (d: number) => setFreq((f) => Math.min(108, Math.max(87.5, Math.round((f + d) * 10) / 10)));
+  const music = useMusic();
+
+  const active = music.radioStation;
+  const isPlaying = music.source === "radio" && music.playing;
+
+  const toggleRadio = () => {
+    if (music.source === "radio" && active) {
+      music.toggle();
+      return;
+    }
+
+    if (active) {
+      music.playRadio(active);
+      return;
+    }
+
+    const first = STATIONS[0];
+    if (first) music.playRadio(first);
+  };
+
   return (
     <ScreenShell title={t("radio")} icon={Radio} note={t("radioNote")}>
       <div className="grid h-full grid-cols-[1.2fr_1fr] gap-6">
-        <div className="flex flex-col items-center justify-center gap-5">
-          <div className="text-sm font-bold text-muted-foreground">FM</div>
-          <div className="font-display text-[96px] font-bold leading-none text-primary glow-text tnum" dir="ltr">
-            {freq.toFixed(1)}
+        <div className="glass flex flex-col items-center justify-center gap-5 rounded-2xl p-6 text-center">
+          <div className="flex items-center gap-2 text-sm font-bold text-primary">
+            <Wifi className="h-4 w-4" />
+            بث مباشر عبر الإنترنت
           </div>
-          <div className="h-6 text-lg font-bold">{current?.name ?? ""}</div>
-          <div className="flex w-full max-w-lg items-center gap-4" dir="ltr">
-            <button className="icon-btn press" onClick={() => stepBy(-0.1)} aria-label="-0.1">
-              <ChevronLeft />
-            </button>
-            <Slider dir="ltr" value={[freq]} min={87.5} max={108} step={0.1} onValueChange={([v]) => setFreq(Math.round((v ?? 100) * 10) / 10)} />
-            <button className="icon-btn press" onClick={() => stepBy(0.1)} aria-label="+0.1">
-              <ChevronRight />
-            </button>
+
+          <div className="flex h-28 w-28 items-center justify-center rounded-full border border-primary/30 bg-primary/10">
+            <Radio className="h-14 w-14 text-primary glow-text" />
           </div>
+
+          <div className="min-h-16">
+            <div className="text-2xl font-bold">
+              {active?.name ?? "اختر محطة للاستماع"}
+            </div>
+            <div className="mt-2 text-sm text-muted-foreground">
+              {isPlaying ? "يعمل الآن" : "الراديو متوقف"}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={toggleRadio}
+            disabled={!active && !STATIONS.length}
+            className="press flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
+            aria-label={isPlaying ? "إيقاف الراديو" : "تشغيل الراديو"}
+          >
+            {isPlaying
+              ? <Pause className="h-7 w-7" />
+              : <Play className="h-7 w-7" />}
+          </button>
         </div>
-        <div>
-          <h2 className="mb-2 text-sm font-bold text-muted-foreground">{t("stations")}</h2>
-          <div className="grid grid-cols-2 gap-2">
-            {STATIONS.map((s) => (
-              <button
-                key={s.f}
-                onClick={() => setFreq(s.f)}
-                className={cn(
-                  "press glass flex flex-col items-start rounded-xl px-4 py-3 text-start",
-                  current?.f === s.f && "glow-ring text-primary",
-                )}
-              >
-                <span className="font-display text-2xl font-bold tnum" dir="ltr">
-                  {s.f.toFixed(1)}
-                </span>
-                <span className="text-sm font-bold">{s.name}</span>
-              </button>
-            ))}
+
+        <div className="flex flex-col">
+          <h2 className="mb-3 text-sm font-bold text-muted-foreground">
+            {t("stations")}
+          </h2>
+
+          <div className="grid grid-cols-1 gap-3">
+            {STATIONS.map((station) => {
+              const selected =
+                music.source === "radio" && active?.id === station.id;
+
+              return (
+                <button
+                  key={station.id}
+                  type="button"
+                  onClick={() => music.playRadio(station)}
+                  className={cn(
+                    "press glass flex items-center gap-4 rounded-xl px-4 py-4 text-start",
+                    selected && "glow-ring text-primary",
+                  )}
+                >
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                    <Radio className="h-6 w-6 text-primary" />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold">{station.name}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      بث إنترنت مباشر
+                    </div>
+                  </div>
+
+                  {selected && isPlaying && (
+                    <span className="text-xs font-bold text-primary">LIVE</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>

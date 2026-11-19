@@ -97,7 +97,7 @@ const ar = {
   moveDown: "تأخير",
   // screens
   stations: "المحطات",
-  radioNote: "عرض تجريبي — لا يوجد اتصال بموالف الراديو في هذه المرحلة.",
+  radioNote: "استمع إلى محطات الراديو عبر الإنترنت.",
   allApps: "جميع التطبيقات",
   dial: "اتصال",
   noPhone: "لا يوجد هاتف متصل عبر البلوتوث.",
@@ -211,7 +211,7 @@ const en: Dict = {
   moveUp: "Move up",
   moveDown: "Move down",
   stations: "Stations",
-  radioNote: "Demo view — no radio tuner connection in this phase.",
+  radioNote: "Listen to live internet radio stations.",
   allApps: "All apps",
   dial: "Call",
   noPhone: "No phone connected over Bluetooth.",

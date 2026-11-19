@@ -12,6 +12,12 @@ export interface Track {
   url?: string;
 }
 
+export interface RadioStation {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export interface MusicPlaylist {
   id: string;
   name: string;
@@ -27,6 +33,9 @@ interface PlaybackState {
   position: number;
   volume: number;
   source: "library" | "radio";
+  radioStationId?: string;
+  radioStationName?: string;
+  radioStreamUrl?: string;
 }
 
 interface MusicStore {
@@ -36,11 +45,13 @@ interface MusicStore {
   position: number;
   volume: number;
   source: "library" | "radio";
+  radioStation: RadioStation | null;
   favorites: string[];
   playlists: MusicPlaylist[];
   libraryReady: boolean;
   addFiles: (files: File[]) => void;
   play: (i?: number) => void;
+  playRadio: (station: RadioStation) => void;
   toggle: () => void;
   next: () => void;
   prev: () => void;
@@ -140,6 +151,13 @@ async function savePlaybackState() {
       position: state.position,
       volume: state.volume,
       source: state.source,
+      ...(state.radioStation
+        ? {
+            radioStationId: state.radioStation.id,
+            radioStationName: state.radioStation.name,
+            radioStreamUrl: state.radioStation.url,
+          }
+        : {}),
     };
 
     const db = await openLibrary();
@@ -267,7 +285,22 @@ export async function initializeMusicLibrary() {
         index,
         position,
         volume,
-        source: playback?.source ?? "library",
+        radioStation:
+          playback?.radioStationId &&
+          playback?.radioStationName &&
+          playback?.radioStreamUrl
+            ? {
+                id: playback.radioStationId,
+                name: playback.radioStationName,
+                url: playback.radioStreamUrl,
+              }
+            : null,
+        source:
+          playback?.source === "radio" &&
+          playback?.radioStationId &&
+          playback?.radioStreamUrl
+            ? "radio"
+            : "library",
         favorites: savedState?.favorites ?? [],
         playlists: savedState?.playlists ?? [],
         libraryReady: true,
@@ -312,6 +345,8 @@ function getAudio() {
       }
 
       const state = useMusic.getState();
+      if (state.source !== "library") return;
+
       const current = state.tracks[state.index];
       if (!current) return;
 
@@ -338,7 +373,11 @@ function getAudio() {
       void savePlaybackState();
     });
 
-    audio.addEventListener("ended", () => useMusic.getState().next());
+    audio.addEventListener("ended", () => {
+      if (useMusic.getState().source === "library") {
+        useMusic.getState().next();
+      }
+    });
   }
 
   return audio;
@@ -351,6 +390,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   position: 0,
   volume: 60,
   source: "library",
+  radioStation: null,
   favorites: [],
   playlists: [],
   libraryReady: false,
@@ -458,6 +498,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
     if (!player) return;
 
     player.volume = state.volume / 100;
+    set({ source: "library", radioStation: null });
 
     const isDifferentTrack = index !== state.index;
     const resumePosition = isDifferentTrack ? 0 : state.position;
@@ -476,6 +517,25 @@ export const useMusic = create<MusicStore>()((set, get) => ({
     void savePlaybackState();
   },
 
+  playRadio: (station) => {
+    const player = getAudio();
+    if (!player) return;
+
+    pendingResumePosition = 0;
+    player.volume = get().volume / 100;
+    player.pause();
+    player.src = station.url;
+
+    set({
+      source: "radio",
+      radioStation: station,
+      position: 0,
+    });
+
+    void player.play().catch(() => set({ playing: false }));
+    void savePlaybackState();
+  },
+
   toggle: () => {
     const player = getAudio();
     if (!player) return;
@@ -485,19 +545,24 @@ export const useMusic = create<MusicStore>()((set, get) => ({
       return;
     }
 
+    if (get().source === "radio" && get().radioStation) {
+      void player.play().catch(() => set({ playing: false }));
+      return;
+    }
+
     get().play();
   },
 
   next: () => {
     const state = get();
-    if (!state.tracks.length) return;
+    if (state.source === "radio" || !state.tracks.length) return;
     get().play((state.index + 1) % state.tracks.length);
   },
 
   prev: () => {
     const state = get();
     const player = getAudio();
-    if (!state.tracks.length || !player) return;
+    if (state.source === "radio" || !state.tracks.length || !player) return;
 
     if (player.currentTime > 5) {
       player.currentTime = 0;
@@ -512,7 +577,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
 
   seek: (sec) => {
     const player = getAudio();
-    if (!player || !Number.isFinite(sec)) return;
+    if (get().source === "radio" || !player || !Number.isFinite(sec)) return;
 
     player.currentTime = Math.max(
       0,
