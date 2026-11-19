@@ -1,7 +1,9 @@
 import { create } from "zustand";
+import * as musicMetadata from "music-metadata-browser";
 
 export interface Track {
   id: string;
+  fileKey?: string;
   title: string;
   artist: string;
   album: string;
@@ -18,6 +20,13 @@ export interface MusicPlaylist {
 
 interface SavedTrack extends Omit<Track, "url"> {
   blob: Blob;
+}
+
+interface PlaybackState {
+  lastTrackId?: string;
+  position: number;
+  volume: number;
+  source: "library" | "radio";
 }
 
 interface MusicStore {
@@ -50,6 +59,19 @@ const DB_VERSION = 1;
 
 let audio: HTMLAudioElement | null = null;
 let libraryInit: Promise<void> | null = null;
+let pendingResumePosition = 0;
+let lastPositionSave = 0;
+
+export const EMPTY_TRACK: Track = {
+  id: "empty",
+  title: "اختر ملفًا موسيقيًا",
+  artist: "بيانات الفنان غير متاحة",
+  album: "ألبوم غير محدد",
+  duration: 0,
+  hue: 188,
+};
+
+export const DEMO_TRACKS: Track[] = [];
 
 function openLibrary(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -77,19 +99,26 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-async function saveTrack(record: SavedTrack) {
-  const db = await openLibrary();
-  const tx = db.transaction("tracks", "readwrite");
-  tx.objectStore("tracks").put(record);
-  await new Promise<void>((resolve, reject) => {
+function transactionDone(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+}
+
+async function saveTrack(record: SavedTrack) {
+  const db = await openLibrary();
+  const tx = db.transaction("tracks", "readwrite");
+  tx.objectStore("tracks").put(record);
+  await transactionDone(tx);
   db.close();
 }
 
-async function saveLibraryState(favorites: string[], playlists: MusicPlaylist[]) {
+async function saveLibraryState(
+  favorites: string[],
+  playlists: MusicPlaylist[],
+) {
   const db = await openLibrary();
   const tx = db.transaction("settings", "readwrite");
   tx.objectStore("settings").put({
@@ -97,12 +126,51 @@ async function saveLibraryState(favorites: string[], playlists: MusicPlaylist[])
     favorites,
     playlists,
   });
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
+  await transactionDone(tx);
   db.close();
+}
+
+async function savePlaybackState() {
+  try {
+    const state = useMusic.getState();
+    const current = state.tracks[state.index];
+
+    const playback: PlaybackState = {
+      ...(current ? { lastTrackId: current.id } : {}),
+      position: state.position,
+      volume: state.volume,
+      source: state.source,
+    };
+
+    const db = await openLibrary();
+    const tx = db.transaction("settings", "readwrite");
+    tx.objectStore("settings").put({
+      key: "playback-state",
+      ...playback,
+    });
+    await transactionDone(tx);
+    db.close();
+  } catch (error) {
+    console.warn("Could not save playback state:", error);
+  }
+}
+
+async function updateSavedDuration(id: string, duration: number) {
+  try {
+    const db = await openLibrary();
+    const tx = db.transaction("tracks", "readwrite");
+    const store = tx.objectStore("tracks");
+    const record = await requestResult(
+      store.get(id),
+    ) as SavedTrack | undefined;
+
+    if (record) store.put({ ...record, duration });
+
+    await transactionDone(tx);
+    db.close();
+  } catch (error) {
+    console.warn("Could not update track duration:", error);
+  }
 }
 
 export async function initializeMusicLibrary() {
@@ -117,12 +185,29 @@ export async function initializeMusicLibrary() {
     try {
       const db = await openLibrary();
       const tx = db.transaction(["tracks", "settings"], "readonly");
-      const savedTracks = await requestResult(
+
+      const savedTracksPromise = requestResult(
         tx.objectStore("tracks").getAll() as IDBRequest<SavedTrack[]>,
       );
-      const savedState = await requestResult(
+
+      const savedStatePromise = requestResult(
         tx.objectStore("settings").get("library-state"),
-      ) as { favorites?: string[]; playlists?: MusicPlaylist[] } | undefined;
+      ) as Promise<{
+        favorites?: string[];
+        playlists?: MusicPlaylist[];
+      } | undefined>;
+
+      const playbackPromise = requestResult(
+        tx.objectStore("settings").get("playback-state"),
+      ) as Promise<PlaybackState | undefined>;
+
+      const [savedTracks, savedState, playback] = await Promise.all([
+        savedTracksPromise,
+        savedStatePromise,
+        playbackPromise,
+      ]);
+
+      await transactionDone(tx);
       db.close();
 
       const tracks = savedTracks.map(({ blob, ...track }) => ({
@@ -130,8 +215,23 @@ export async function initializeMusicLibrary() {
         url: URL.createObjectURL(blob),
       }));
 
+      let index = 0;
+      if (playback?.lastTrackId) {
+        const restoredIndex = tracks.findIndex(
+          (track) => track.id === playback.lastTrackId,
+        );
+        if (restoredIndex >= 0) index = restoredIndex;
+      }
+
+      const position = Math.max(0, playback?.position ?? 0);
+      const volume = Math.max(0, Math.min(100, playback?.volume ?? 60));
+
       useMusic.setState({
         tracks,
+        index,
+        position,
+        volume,
+        source: playback?.source ?? "library",
         favorites: savedState?.favorites ?? [],
         playlists: savedState?.playlists ?? [],
         libraryReady: true,
@@ -145,24 +245,6 @@ export async function initializeMusicLibrary() {
   return libraryInit;
 }
 
-async function updateSavedDuration(id: string, duration: number) {
-  try {
-    const db = await openLibrary();
-    const tx = db.transaction("tracks", "readwrite");
-    const store = tx.objectStore("tracks");
-    const record = await requestResult(store.get(id)) as SavedTrack | undefined;
-    if (record) store.put({ ...record, duration });
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
-    db.close();
-  } catch (error) {
-    console.warn("Could not update saved track duration:", error);
-  }
-}
-
 function getAudio() {
   if (typeof Audio === "undefined") return null;
 
@@ -171,11 +253,28 @@ function getAudio() {
     audio.preload = "metadata";
 
     audio.addEventListener("timeupdate", () => {
-      if (audio) useMusic.setState({ position: audio.currentTime });
+      if (!audio) return;
+
+      useMusic.setState({ position: audio.currentTime });
+
+      const now = Date.now();
+      if (now - lastPositionSave > 5000) {
+        lastPositionSave = now;
+        void savePlaybackState();
+      }
     });
 
     audio.addEventListener("loadedmetadata", () => {
       if (!audio) return;
+
+      if (pendingResumePosition > 0) {
+        audio.currentTime = Math.min(
+          pendingResumePosition,
+          audio.duration || pendingResumePosition,
+        );
+        pendingResumePosition = 0;
+      }
+
       const state = useMusic.getState();
       const current = state.tracks[state.index];
       if (!current) return;
@@ -183,28 +282,31 @@ function getAudio() {
       const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
       const tracks = [...state.tracks];
       tracks[state.index] = { ...current, duration };
-      useMusic.setState({ tracks });
+
+      useMusic.setState({
+        tracks,
+        position: audio.currentTime,
+      });
+
       void updateSavedDuration(current.id, duration);
+      void savePlaybackState();
     });
 
-    audio.addEventListener("play", () => useMusic.setState({ playing: true }));
-    audio.addEventListener("pause", () => useMusic.setState({ playing: false }));
+    audio.addEventListener("play", () => {
+      useMusic.setState({ playing: true });
+      void savePlaybackState();
+    });
+
+    audio.addEventListener("pause", () => {
+      useMusic.setState({ playing: false });
+      void savePlaybackState();
+    });
+
     audio.addEventListener("ended", () => useMusic.getState().next());
   }
 
   return audio;
 }
-
-export const EMPTY_TRACK: Track = {
-  id: "empty",
-  title: "اختر ملفًا موسيقيًا",
-  artist: "بيانات الفنان غير متاحة",
-  album: "ألبوم غير محدد",
-  duration: 0,
-  hue: 188,
-};
-
-export const DEMO_TRACKS: Track[] = [];
 
 export const useMusic = create<MusicStore>()((set, get) => ({
   tracks: [],
@@ -227,23 +329,41 @@ export const useMusic = create<MusicStore>()((set, get) => ({
     if (!valid.length) return;
 
     void (async () => {
-      const startIndex = get().tracks.length;
       const added: Track[] = [];
+      const known = new Set(
+        get().tracks.map((track) => track.fileKey ?? ""),
+      );
 
       for (let i = 0; i < valid.length; i++) {
         const file = valid[i];
         if (!file) continue;
 
-        const id = typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${file.name}-${file.size}-${file.lastModified}`;
+        const fileKey = `${file.name}::${file.size}::${file.lastModified}`;
+        if (known.has(fileKey)) continue;
+        known.add(fileKey);
+
+        let title = file.name.replace(/\.[^.]+$/, "");
+        let artist = "فنان غير معروف";
+        let album = "ألبوم غير محدد";
+        let duration = 0;
+
+        try {
+          const metadata = await musicMetadata.parseBlob(file);
+          title = metadata.common.title || title;
+          artist = metadata.common.artist || artist;
+          album = metadata.common.album || album;
+          duration = metadata.format.duration ?? 0;
+        } catch (error) {
+          console.warn(`Metadata unavailable for ${file.name}:`, error);
+        }
 
         const track: Track = {
-          id,
-          title: file.name.replace(/\.[^.]+$/, ""),
-          artist: "فنان غير محدد",
-          album: "ألبوم غير محدد",
-          duration: 0,
+          id: fileKey,
+          fileKey,
+          title,
+          artist,
+          album,
+          duration,
           hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
           url: URL.createObjectURL(file),
         };
@@ -251,10 +371,11 @@ export const useMusic = create<MusicStore>()((set, get) => ({
         try {
           await saveTrack({
             id: track.id,
-            title: track.title,
-            artist: track.artist,
-            album: track.album,
-            duration: track.duration,
+            fileKey,
+            title,
+            artist,
+            album,
+            duration,
             hue: track.hue,
             blob: file,
           });
@@ -266,6 +387,8 @@ export const useMusic = create<MusicStore>()((set, get) => ({
       }
 
       if (!added.length) return;
+
+      const startIndex = get().tracks.length;
 
       set((state) => ({
         tracks: [...state.tracks, ...added],
@@ -293,16 +416,21 @@ export const useMusic = create<MusicStore>()((set, get) => ({
 
     player.volume = state.volume / 100;
 
+    const isDifferentTrack = index !== state.index;
+    const resumePosition = isDifferentTrack ? 0 : state.position;
+
     if (player.src !== new URL(track.url, window.location.href).href) {
+      pendingResumePosition = resumePosition;
       player.src = track.url;
-      player.currentTime = 0;
-      set({ index, position: 0 });
-    } else if (i !== undefined && i !== state.index) {
+      set({ index, position: resumePosition });
+    } else if (isDifferentTrack) {
+      pendingResumePosition = 0;
       player.currentTime = 0;
       set({ index, position: 0 });
     }
 
     void player.play().catch(() => set({ playing: false }));
+    void savePlaybackState();
   },
 
   toggle: () => {
@@ -331,26 +459,39 @@ export const useMusic = create<MusicStore>()((set, get) => ({
     if (player.currentTime > 5) {
       player.currentTime = 0;
       set({ position: 0 });
+      void savePlaybackState();
     } else {
-      get().play((state.index - 1 + state.tracks.length) % state.tracks.length);
+      get().play(
+        (state.index - 1 + state.tracks.length) % state.tracks.length,
+      );
     }
   },
 
   seek: (sec) => {
     const player = getAudio();
     if (!player || !Number.isFinite(sec)) return;
-    player.currentTime = Math.max(0, Math.min(sec, player.duration || sec));
+
+    player.currentTime = Math.max(
+      0,
+      Math.min(sec, player.duration || sec),
+    );
     set({ position: player.currentTime });
+    void savePlaybackState();
   },
 
   setVolume: (v) => {
     const volume = Math.max(0, Math.min(100, v));
     const player = getAudio();
     if (player) player.volume = volume / 100;
+
     set({ volume });
+    void savePlaybackState();
   },
 
-  setSource: (source) => set({ source }),
+  setSource: (source) => {
+    set({ source });
+    void savePlaybackState();
+  },
 
   toggleFavorite: (id) => {
     const favorites = get().favorites.includes(id)
@@ -382,6 +523,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
         ? { ...playlist, trackIds: [...playlist.trackIds, trackId] }
         : playlist,
     );
+
     set({ playlists });
     void saveLibraryState(get().favorites, playlists);
   },
@@ -389,9 +531,13 @@ export const useMusic = create<MusicStore>()((set, get) => ({
   removeFromPlaylist: (playlistId, trackId) => {
     const playlists = get().playlists.map((playlist) =>
       playlist.id === playlistId
-        ? { ...playlist, trackIds: playlist.trackIds.filter((id) => id !== trackId) }
+        ? {
+            ...playlist,
+            trackIds: playlist.trackIds.filter((id) => id !== trackId),
+          }
         : playlist,
     );
+
     set({ playlists });
     void saveLibraryState(get().favorites, playlists);
   },
