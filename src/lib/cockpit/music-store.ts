@@ -53,10 +53,13 @@ function getAudio() {
       const state = useMusic.getState();
       const tracks = [...state.tracks];
       if (tracks[state.index]) {
+        const current = tracks[state.index];
+      if (current) {
         tracks[state.index] = {
-          ...tracks[state.index],
+          ...current,
           duration: Number.isFinite(audio.duration) ? audio.duration : 0,
         };
+      }
         useMusic.setState({ tracks });
       }
     });
@@ -90,7 +93,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
       title: file.name.replace(/\.[^.]+$/, ""),
       artist: "ملف من الجهاز",
       duration: 0,
-      hue: [188, 232, 160, 205, 250][i % 5],
+      hue: [188, 232, 160, 205, 250][i % 5] ?? 188,
       url: URL.createObjectURL(file),
     }));
 
