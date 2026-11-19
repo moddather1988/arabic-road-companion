@@ -374,6 +374,7 @@ export const useMusic = create<MusicStore>()((set, get) => ({
         const file = valid[i];
         if (!file) continue;
 
+        alert("اسم الملف الذي استلمه التطبيق: " + file.name);
         console.log("[MUSIC IMPORT DIAGNOSTIC]", {
           actualFileName: file.name,
           fileType: file.type,
