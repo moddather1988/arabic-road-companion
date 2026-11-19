@@ -210,9 +210,54 @@ export async function initializeMusicLibrary() {
       await transactionDone(tx);
       db.close();
 
-      const tracks = savedTracks.map(({ blob, ...track }) => ({
-        ...track,
-        url: URL.createObjectURL(blob),
+      const tracks = await Promise.all(savedTracks.map(async (record) => {
+        const { blob, ...track } = record;
+        const badTag = (value?: string) =>
+          !value?.trim() ||
+          /sm3na|www\.|\.com|\.net|\.org|download/i.test(value);
+
+        let title = track.title;
+        let artist = track.artist;
+        let album = track.album;
+
+        if (badTag(title) || badTag(artist) || badTag(album)) {
+          const filename = ((track.fileKey || track.id).split("::")[0] || track.title)
+            .replace(/\.[^.]+$/, "")
+            .trim();
+
+          try {
+            const metadata = await musicMetadata.parseBlob(blob);
+
+            if (badTag(title)) {
+              title = !badTag(metadata.common.title)
+                ? metadata.common.title!.trim()
+                : filename || title;
+            }
+            if (badTag(artist)) {
+              artist = !badTag(metadata.common.artist)
+                ? metadata.common.artist!.trim()
+                : "فنان غير معروف";
+            }
+            if (badTag(album)) {
+              album = !badTag(metadata.common.album)
+                ? metadata.common.album!.trim()
+                : "ألبوم غير محدد";
+            }
+
+            await saveTrack({ ...track, title, artist, album, blob });
+          } catch (error) {
+            console.warn("Could not repair saved music metadata:", error);
+            if (badTag(title) && filename) title = filename;
+          }
+        }
+
+        return {
+          ...track,
+          title,
+          artist,
+          album,
+          url: URL.createObjectURL(blob),
+        };
       }));
 
       let index = 0;
@@ -349,9 +394,19 @@ export const useMusic = create<MusicStore>()((set, get) => ({
 
         try {
           const metadata = await musicMetadata.parseBlob(file);
-          title = metadata.common.title || title;
-          artist = metadata.common.artist || artist;
-          album = metadata.common.album || album;
+          const isBadTag = (value?: string) =>
+            !value?.trim() ||
+            /sm3na|www\.|\.com|\.net|\.org|download/i.test(value);
+
+          title = isBadTag(metadata.common.title)
+            ? title
+            : metadata.common.title!.trim();
+          artist = isBadTag(metadata.common.artist)
+            ? artist
+            : metadata.common.artist!.trim();
+          album = isBadTag(metadata.common.album)
+            ? album
+            : metadata.common.album!.trim();
           duration = metadata.format.duration ?? 0;
         } catch (error) {
           console.warn(`Metadata unavailable for ${file.name}:`, error);
