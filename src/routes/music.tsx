@@ -289,36 +289,44 @@ function MusicScreen() {
           </div>
 
           {tab === "albums" && (
-            <div className="mb-2 flex flex-wrap gap-2">
+            <div className="mb-2 flex min-h-0 shrink-0 flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden pb-1">
               {albums.map((album) => (
                 <button
                   key={album.name}
                   onClick={() => setSelectedGroup(selectedGroup === album.name ? "" : album.name)}
+                  title={`${album.name} (${album.count} أغنية)`}
                   className={cn(
-                    "rounded-lg px-3 py-2 text-xs font-bold",
-                    selectedGroup === album.name ? "bg-primary text-primary-foreground" : "bg-background/50",
+                    "flex max-w-[170px] shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold",
+                    selectedGroup === album.name
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background/50 text-foreground",
                   )}
                 >
-                  <Disc3 className="mr-1 inline size-3.5" />
-                  {album.name} ({album.count})
+                  <Disc3 className="size-3 shrink-0" />
+                  <span className="truncate">{album.name}</span>
+                  <span className="shrink-0 opacity-75">({album.count})</span>
                 </button>
               ))}
             </div>
           )}
 
           {tab === "artists" && (
-            <div className="mb-2 flex flex-wrap gap-2">
+            <div className="mb-2 flex min-h-0 shrink-0 flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden pb-1">
               {artists.map((artist) => (
                 <button
                   key={artist.name}
                   onClick={() => setSelectedGroup(selectedGroup === artist.name ? "" : artist.name)}
+                  title={`${artist.name} (${artist.count} أغنية)`}
                   className={cn(
-                    "rounded-lg px-3 py-2 text-xs font-bold",
-                    selectedGroup === artist.name ? "bg-primary text-primary-foreground" : "bg-background/50",
+                    "flex max-w-[170px] shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold",
+                    selectedGroup === artist.name
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background/50 text-foreground",
                   )}
                 >
-                  <Users className="mr-1 inline size-3.5" />
-                  {artist.name} ({artist.count})
+                  <Users className="size-3 shrink-0" />
+                  <span className="truncate">{artist.name}</span>
+                  <span className="shrink-0 opacity-75">({artist.count})</span>
                 </button>
               ))}
             </div>
