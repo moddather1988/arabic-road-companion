@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { AlbumArt } from "./AlbumArt";
-import { DEMO_TRACKS, trackAt, formatClock, useMusic } from "@/lib/cockpit/music-store";
+import { EMPTY_TRACK, formatClock, useMusic } from "@/lib/cockpit/music-store";
 import { useT } from "@/lib/cockpit/i18n";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,7 @@ export function Transport({ big = false }: { big?: boolean }) {
   const sz = big ? "size-7" : "size-5";
   const Prev = dir === "rtl" ? SkipForward : SkipBack;
   const Next = dir === "rtl" ? SkipBack : SkipForward;
+
   return (
     <div className="flex items-center gap-3">
       <button className="press rounded-full p-2 text-foreground hover:text-primary" onClick={m.prev} aria-label={t("previous")}>
@@ -39,17 +40,19 @@ export function Transport({ big = false }: { big?: boolean }) {
 export function Progress() {
   const { dir } = useT();
   const m = useMusic();
-  const track = trackAt(m.index);
+  const track = m.tracks[m.index] ?? EMPTY_TRACK;
+
   return (
     <div className="flex w-full items-center gap-2 text-[11px] font-medium text-muted-foreground tnum">
       <span dir="ltr">{formatClock(m.position)}</span>
       <Slider
         dir={dir}
-        value={[m.position]}
-        max={track.duration}
+        value={[Math.min(m.position, track.duration || 1)]}
+        max={Math.max(track.duration, 1)}
         step={1}
         onValueChange={([v]) => m.seek(v ?? 0)}
         className="flex-1"
+        disabled={!track.duration}
       />
       <span dir="ltr">{formatClock(track.duration)}</span>
     </div>
@@ -59,7 +62,7 @@ export function Progress() {
 export function MusicBar() {
   const { t, dir } = useT();
   const m = useMusic();
-  const track = trackAt(m.index);
+  const track = m.tracks[m.index] ?? EMPTY_TRACK;
 
   return (
     <div className="glass flex h-[64px] shrink-0 items-center gap-4 rounded-2xl px-3 animate-screen-in">
@@ -67,7 +70,7 @@ export function MusicBar() {
         <AlbumArt hue={track.hue} className="size-11" />
         <div className="min-w-0">
           <div className="truncate text-[15px] font-bold">{track.title}</div>
-          <div className="truncate text-[11px] text-muted-foreground">{t("demoPlaylist")}</div>
+          <div className="truncate text-[11px] text-muted-foreground">{track.artist}</div>
         </div>
       </Link>
 
@@ -94,8 +97,20 @@ export function MusicBar() {
         <Slider dir={dir} value={[m.volume]} max={100} step={1} onValueChange={([v]) => m.setVolume(v ?? 0)} />
       </div>
 
-      <div className="flex rounded-xl bg-background/40 p-1 text-sm font-bold">
-        <span className="rounded-lg bg-primary/20 px-3 py-1.5 text-primary">{t("library")}</span>
+      <div className="flex items-center gap-1 rounded-xl bg-background/40 p-1 text-sm font-bold">
+        <label className="press cursor-pointer rounded-lg bg-primary/20 px-3 py-1.5 text-primary">
+          {t("library")}
+          <input
+            type="file"
+            accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              m.addFiles(Array.from(event.currentTarget.files ?? []));
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
         <Link to="/radio" className="press rounded-lg px-3 py-1.5 text-foreground/80 hover:text-primary">
           {t("radio")}
         </Link>

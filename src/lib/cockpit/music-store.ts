@@ -3,29 +3,28 @@ import { create } from "zustand";
 export interface Track {
   title: string;
   artist: string;
-  duration: number; // seconds
-  hue: number; // album art tint
+  duration: number;
+  hue: number;
+  url?: string;
 }
 
-/** Demo playlist – shown labelled as a demo; no audio is streamed in this phase. */
-export const DEMO_TRACKS: [Track, ...Track[]] = [
-  { title: "طريق الواحة", artist: "قائمة تجريبية", duration: 214, hue: 188 },
-  { title: "ليل القاهرة", artist: "قائمة تجريبية", duration: 241, hue: 232 },
-  { title: "نسيم الصحراء", artist: "قائمة تجريبية", duration: 198, hue: 160 },
-  { title: "على مهل", artist: "قائمة تجريبية", duration: 263, hue: 205 },
-  { title: "أضواء المدينة", artist: "قائمة تجريبية", duration: 187, hue: 250 },
-];
+export const EMPTY_TRACK: Track = {
+  title: "اختر ملفًا موسيقيًا",
+  artist: "لا توجد أغنية قيد التشغيل",
+  duration: 0,
+  hue: 188,
+};
 
-export function trackAt(i: number): Track {
-  return DEMO_TRACKS[i] ?? DEMO_TRACKS[0];
-}
+export const DEMO_TRACKS: Track[] = [];
 
 interface MusicStore {
+  tracks: Track[];
   index: number;
   playing: boolean;
   position: number;
   volume: number;
   source: "library" | "radio";
+  addFiles: (files: File[]) => void;
   play: (i?: number) => void;
   toggle: () => void;
   next: () => void;
@@ -36,35 +35,161 @@ interface MusicStore {
   tick: (dt: number) => void;
 }
 
+let audio: HTMLAudioElement | null = null;
+
+function getAudio() {
+  if (typeof Audio === "undefined") return null;
+
+  if (!audio) {
+    audio = new Audio();
+    audio.preload = "metadata";
+
+    audio.addEventListener("timeupdate", () => {
+      if (audio) useMusic.setState({ position: audio.currentTime });
+    });
+
+    audio.addEventListener("loadedmetadata", () => {
+      if (!audio) return;
+      const state = useMusic.getState();
+      const tracks = [...state.tracks];
+      if (tracks[state.index]) {
+        tracks[state.index] = {
+          ...tracks[state.index],
+          duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+        };
+        useMusic.setState({ tracks });
+      }
+    });
+
+    audio.addEventListener("play", () => useMusic.setState({ playing: true }));
+    audio.addEventListener("pause", () => useMusic.setState({ playing: false }));
+    audio.addEventListener("ended", () => useMusic.getState().next());
+  }
+
+  return audio;
+}
+
 export const useMusic = create<MusicStore>()((set, get) => ({
+  tracks: [],
   index: 0,
-  playing: true,
-  position: 42,
+  playing: false,
+  position: 0,
   volume: 60,
   source: "library",
-  play: (i) => set((s) => ({ index: i ?? s.index, position: i === undefined ? s.position : 0, playing: true })),
-  toggle: () => set((s) => ({ playing: !s.playing })),
-  next: () => set((s) => ({ index: (s.index + 1) % DEMO_TRACKS.length, position: 0 })),
-  prev: () =>
-    set((s) =>
-      s.position > 5
-        ? { position: 0 }
-        : { index: (s.index - 1 + DEMO_TRACKS.length) % DEMO_TRACKS.length, position: 0 },
-    ),
-  seek: (sec) => set({ position: sec }),
-  setVolume: (v) => set({ volume: v }),
-  setSource: (source) => set({ source }),
-  tick: (dt) => {
-    const s = get();
-    if (!s.playing) return;
-    const dur = trackAt(s.index).duration;
-    if (s.position + dt >= dur) get().next();
-    else set({ position: s.position + dt });
+
+  addFiles: (files) => {
+    const valid = files.filter(
+      (file) =>
+        file.type.startsWith("audio/") ||
+        /\.(mp3|m4a|aac|wav|ogg|flac|opus|wma)$/i.test(file.name),
+    );
+
+    if (!valid.length) return;
+
+    const added = valid.map((file, i) => ({
+      title: file.name.replace(/\.[^.]+$/, ""),
+      artist: "ملف من الجهاز",
+      duration: 0,
+      hue: [188, 232, 160, 205, 250][i % 5],
+      url: URL.createObjectURL(file),
+    }));
+
+    const startIndex = get().tracks.length;
+    set((state) => ({
+      tracks: [...state.tracks, ...added],
+      index: startIndex,
+      position: 0,
+      source: "library",
+    }));
+
+    get().play(startIndex);
   },
+
+  play: (i) => {
+    const state = get();
+    const index = i ?? state.index;
+    const track = state.tracks[index];
+    if (!track?.url) {
+      set({ playing: false });
+      return;
+    }
+
+    const player = getAudio();
+    if (!player) return;
+
+    player.volume = state.volume / 100;
+
+    if (player.src !== new URL(track.url, window.location.href).href) {
+      player.src = track.url;
+      player.currentTime = 0;
+      set({ index, position: 0 });
+    } else if (i !== undefined && i !== state.index) {
+      player.currentTime = 0;
+      set({ index, position: 0 });
+    }
+
+    void player.play().catch(() => set({ playing: false }));
+  },
+
+  toggle: () => {
+    const player = getAudio();
+    if (!player) return;
+
+    if (!player.paused) {
+      player.pause();
+      return;
+    }
+
+    get().play();
+  },
+
+  next: () => {
+    const state = get();
+    if (!state.tracks.length) return;
+    const nextIndex = (state.index + 1) % state.tracks.length;
+    get().play(nextIndex);
+  },
+
+  prev: () => {
+    const state = get();
+    const player = getAudio();
+    if (!state.tracks.length || !player) return;
+
+    if (player.currentTime > 5) {
+      player.currentTime = 0;
+      set({ position: 0 });
+    } else {
+      const previousIndex =
+        (state.index - 1 + state.tracks.length) % state.tracks.length;
+      get().play(previousIndex);
+    }
+  },
+
+  seek: (sec) => {
+    const player = getAudio();
+    if (!player || !Number.isFinite(sec)) return;
+    player.currentTime = Math.max(0, Math.min(sec, player.duration || sec));
+    set({ position: player.currentTime });
+  },
+
+  setVolume: (v) => {
+    const volume = Math.max(0, Math.min(100, v));
+    const player = getAudio();
+    if (player) player.volume = volume / 100;
+    set({ volume });
+  },
+
+  setSource: (source) => set({ source }),
+  tick: () => {},
 }));
 
+export function trackAt(i: number): Track {
+  return useMusic.getState().tracks[i] ?? EMPTY_TRACK;
+}
+
 export function formatClock(sec: number) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
+  const safe = Number.isFinite(sec) ? Math.max(0, sec) : 0;
+  const m = Math.floor(safe / 60);
+  const s = Math.floor(safe % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
 }
