@@ -4,6 +4,7 @@ import { ScreenShell } from "@/components/launcher/ScreenShell";
 import { useMusic, type RadioStation } from "@/lib/cockpit/music-store";
 import { useT } from "@/lib/cockpit/i18n";
 import { cn } from "@/lib/utils";
+import { CarRadio } from "@/lib/cockpit/car-radio";
 
 export const Route = createFileRoute("/radio")({
   head: () => ({
@@ -78,6 +79,21 @@ function RadioScreen() {
               {isPlaying ? "يعمل الآن" : "الراديو متوقف"}
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const result = await CarRadio.open();
+                window.alert(result.message);
+              } catch {
+                window.alert("تعذر فتح راديو السيارة.");
+              }
+            }}
+            className="press rounded-xl border border-primary/40 px-5 py-3 text-sm font-bold text-primary"
+          >
+            راديو السيارة FM الأصلي
+          </button>
 
           <button
             type="button"
