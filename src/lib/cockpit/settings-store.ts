@@ -38,7 +38,7 @@ const defaults = {
   gaugeScale: 1,
   widgets: { trip: true, prayer: true, music: true, weather: true },
   dockOrder: DEFAULT_DOCK,
-  speedSource: "demo" as SpeedSource,
+  speedSource: "gps" as SpeedSource,
   fuelRate: 7.5,
   fuelPrice: 17.75,
 };
@@ -67,6 +67,14 @@ export const useSettings = create<SettingsState>()(
       name: "gardenia-settings",
       storage: createJSONStorage(() => localStorage),
       skipHydration: true,
+      version: 1,
+      migrate: (persistedState, version) => {
+        const state = persistedState as Partial<SettingsState>;
+        return {
+          ...state,
+          speedSource: version < 1 ? "gps" : (state.speedSource ?? "gps"),
+        } as SettingsState;
+      },
     },
   ),
 );

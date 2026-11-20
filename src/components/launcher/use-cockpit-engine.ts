@@ -1,80 +1,189 @@
 import { useEffect, useRef } from "react";
+import { Geolocation } from "@capacitor/geolocation";
 import { stepDemo, useDrive, type DemoState } from "@/lib/cockpit/drive";
 import { useSettings } from "@/lib/cockpit/settings-store";
 import { useMusic } from "@/lib/cockpit/music-store";
 
-/** Runs the speed source (demo simulation or real GPS), the trip integrator and the music clock. */
+/** Real GPS speed and position-based trip tracking. */
 export function useCockpitEngine() {
   const source = useSettings((s) => s.speedSource);
   const demo = useRef<DemoState>({ speed: 0, target: 70, holdLeft: 4, heading: 30 });
 
-  // Speed source
   useEffect(() => {
     const patch = useDrive.getState().patch;
+
     if (source === "demo") {
       patch({ gps: "off", hasHeading: true });
       demo.current.speed = useDrive.getState().speed;
       let last = performance.now();
       const id = setInterval(() => {
-        const t = performance.now();
-        const dt = Math.min(0.5, (t - last) / 1000);
-        last = t;
+        const now = performance.now();
+        const dt = Math.min(0.5, (now - last) / 1000);
+        last = now;
         demo.current = stepDemo(demo.current, dt);
         patch({ speed: demo.current.speed, heading: demo.current.heading });
       }, 100);
       return () => clearInterval(id);
     }
-    if (!navigator.geolocation) {
-      patch({ gps: "unavailable", speed: 0 });
-      return;
-    }
+
     patch({ gps: "waiting", speed: 0, hasHeading: false });
-    let prev: GeolocationPosition | null = null;
-    const watch = navigator.geolocation.watchPosition(
-      (pos) => {
-        let mps = pos.coords.speed;
-        if ((mps === null || Number.isNaN(mps)) && prev) {
-          const dt = (pos.timestamp - prev.timestamp) / 1000;
-          if (dt > 0) mps = haversine(prev.coords, pos.coords) / dt;
+    let cancelled = false;
+    let watchId: string | undefined;
+    let previous: { lat: number; lon: number; timestamp: number } | null = null;
+
+    const startGps = async () => {
+      try {
+        let permission = await Geolocation.checkPermissions();
+
+        if (permission.location !== "granted") {
+          permission = await Geolocation.requestPermissions();
         }
-        prev = pos;
-        const h = pos.coords.heading;
-        patch({
-          gps: "active",
-          speed: Math.max(0, (mps ?? 0) * 3.6),
-          ...(h !== null && !Number.isNaN(h) ? { heading: h, hasHeading: true } : {}),
-        });
-      },
-      (err) => patch({ gps: err.code === err.PERMISSION_DENIED ? "denied" : "unavailable", speed: 0 }),
-      { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 },
-    );
-    return () => navigator.geolocation.clearWatch(watch);
+
+        if (cancelled) return;
+
+        if (permission.location !== "granted") {
+          patch({ gps: "denied", speed: 0, hasHeading: false });
+          return;
+        }
+
+        watchId = await Geolocation.watchPosition(
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 },
+          (position, error) => {
+            if (cancelled) return;
+
+            if (error) {
+              const denied = String(error.message ?? error)
+                .toLowerCase()
+                .includes("permission");
+              patch({
+                gps: denied ? "denied" : "unavailable",
+                speed: 0,
+                hasHeading: false,
+              });
+              return;
+            }
+
+            if (!position) return;
+
+            const c = position.coords;
+            const timestamp = position.timestamp;
+            const accuracy = c.accuracy ?? Infinity;
+
+            // Ignore weak fixes; they can create wildly inaccurate speed readings.
+            if (!Number.isFinite(accuracy) || accuracy > 50) {
+              previous = null;
+              patch({ gps: "waiting", speed: 0, hasHeading: false });
+              return;
+            }
+
+            let distanceMeters = 0;
+            let mps = c.speed;
+
+            if (previous) {
+              const dt = (timestamp - previous.timestamp) / 1000;
+              distanceMeters = haversine(previous.lat, previous.lon, c.latitude, c.longitude);
+
+              if (
+                (mps === null || !Number.isFinite(mps)) &&
+                dt >= 0.5 &&
+                dt <= 10 &&
+                distanceMeters >= 3
+              ) {
+                mps = distanceMeters / dt;
+              }
+
+              // Accumulate actual GPS displacement, not estimated speed × timer.
+              if (
+                dt >= 0.5 &&
+                dt <= 10 &&
+                distanceMeters >= 2 &&
+                distanceMeters <= 200 &&
+                mps !== null &&
+                Number.isFinite(mps) &&
+                mps > 0.5 &&
+                mps < 60
+              ) {
+                useDrive.getState().patch({
+                  distanceKm: useDrive.getState().distanceKm + distanceMeters / 1000,
+                });
+              }
+            }
+
+            previous = {
+              lat: c.latitude,
+              lon: c.longitude,
+              timestamp,
+            };
+
+            const validSpeed = mps !== null && Number.isFinite(mps) && mps >= 0 && mps < 60;
+            const speed =
+              mps !== null && Number.isFinite(mps) && mps >= 0 && mps < 60 ? mps * 3.6 : 0;
+            const heading = c.heading;
+
+            patch({
+              gps: "active",
+              speed,
+              ...(heading !== null && Number.isFinite(heading) && speed > 1
+                ? { heading, hasHeading: true }
+                : {}),
+            });
+          },
+        );
+
+        if (cancelled && watchId) {
+          await Geolocation.clearWatch({ id: watchId });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = String(error).toLowerCase();
+          patch({
+            gps: message.includes("permission") ? "denied" : "unavailable",
+            speed: 0,
+            hasHeading: false,
+          });
+        }
+      }
+    };
+
+    void startGps();
+
+    return () => {
+      cancelled = true;
+      if (watchId) void Geolocation.clearWatch({ id: watchId });
+    };
   }, [source]);
 
-  // Trip integrator + music clock (1 Hz)
+  // Driving time + demo distance + music clock.
+  // GPS distance is accumulated from accepted position updates above.
   useEffect(() => {
     let last = performance.now();
     const id = setInterval(() => {
-      const t = performance.now();
-      const dt = (t - last) / 1000;
-      last = t;
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+
       const d = useDrive.getState();
       if (d.speed > 1) {
-        d.patch({ distanceKm: d.distanceKm + (d.speed * dt) / 3600, drivingSec: d.drivingSec + dt });
+        d.patch({
+          drivingSec: d.drivingSec + dt,
+          ...(source === "demo" ? { distanceKm: d.distanceKm + (d.speed * dt) / 3600 } : {}),
+        });
       }
+
       useMusic.getState().tick(dt);
     }, 1000);
+
     return () => clearInterval(id);
-  }, []);
+  }, [source]);
 }
 
-function haversine(a: GeolocationCoordinates, b: GeolocationCoordinates) {
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371000;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const dLat = toRad(b.latitude - a.latitude);
-  const dLng = toRad(b.longitude - a.longitude);
-  const s =
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s));
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
