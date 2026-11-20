@@ -30,6 +30,8 @@ export function useCockpitEngine() {
     let cancelled = false;
     let watchId: string | undefined;
     let previous: { lat: number; lon: number; timestamp: number } | null = null;
+    let filteredSpeedKmh = 0;
+    let lastSpeedTimestamp: number | null = null;
 
     const startGps = async () => {
       try {
@@ -55,6 +57,9 @@ export function useCockpitEngine() {
               const denied = String(error.message ?? error)
                 .toLowerCase()
                 .includes("permission");
+              filteredSpeedKmh = 0;
+              lastSpeedTimestamp = null;
+              previous = null;
               patch({
                 gps: denied ? "denied" : "unavailable",
                 speed: 0,
@@ -72,6 +77,8 @@ export function useCockpitEngine() {
             // Ignore weak fixes; they can create wildly inaccurate speed readings.
             if (!Number.isFinite(accuracy) || accuracy > 50) {
               previous = null;
+              filteredSpeedKmh = 0;
+              lastSpeedTimestamp = null;
               patch({ gps: "waiting", speed: 0, hasHeading: false });
               return;
             }
@@ -116,8 +123,35 @@ export function useCockpitEngine() {
             };
 
             const validSpeed = mps !== null && Number.isFinite(mps) && mps >= 0 && mps < 60;
-            const speed =
+            const rawSpeedKmh =
               mps !== null && Number.isFinite(mps) && mps >= 0 && mps < 60 ? mps * 3.6 : 0;
+
+            // Suppress tiny GPS movement while stopped.
+            const targetSpeedKmh = rawSpeedKmh < 2 ? 0 : rawSpeedKmh;
+
+            const filterDt =
+              lastSpeedTimestamp === null
+                ? 1
+                : Math.min(3, Math.max(0.1, (timestamp - lastSpeedTimestamp) / 1000));
+
+            if (lastSpeedTimestamp === null) {
+              filteredSpeedKmh = targetSpeedKmh;
+            } else {
+              // Limit sudden jumps, then apply adaptive smoothing.
+              const accelerating = targetSpeedKmh > filteredSpeedKmh;
+              const maxChange = (accelerating ? 25 : 40) * filterDt;
+              const limitedTarget =
+                filteredSpeedKmh +
+                Math.max(-maxChange, Math.min(maxChange, targetSpeedKmh - filteredSpeedKmh));
+
+              const timeConstant = accelerating ? 0.35 : 0.25;
+              const alpha = 1 - Math.exp(-filterDt / timeConstant);
+
+              filteredSpeedKmh += (limitedTarget - filteredSpeedKmh) * alpha;
+            }
+
+            lastSpeedTimestamp = timestamp;
+            const speed = Math.max(0, filteredSpeedKmh);
             const heading = c.heading;
 
             patch({
@@ -136,6 +170,9 @@ export function useCockpitEngine() {
       } catch (error) {
         if (!cancelled) {
           const message = String(error).toLowerCase();
+          filteredSpeedKmh = 0;
+          lastSpeedTimestamp = null;
+          previous = null;
           patch({
             gps: message.includes("permission") ? "denied" : "unavailable",
             speed: 0,
