@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { App } from "@capacitor/app";
 import skyUrl from "@/assets/scene-sky.jpg";
 import palmUrl from "@/assets/palm.png";
 import { useDrive } from "@/lib/cockpit/drive";
@@ -44,6 +45,9 @@ export function RoadScene({ width, mode, scene }: Props) {
     palm.src = palmUrl;
 
     let raf = 0;
+    let running = false;
+    let disposed = false;
+    let appHandle: { remove: () => Promise<void> } | undefined;
     let last = performance.now();
     let pos = 0; // metres travelled (visual)
     let shown = useDrive.getState().speed;
@@ -88,7 +92,10 @@ export function RoadScene({ width, mode, scene }: Props) {
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, W, H);
       } else if (sky.complete && sky.naturalWidth) {
-        const s = Math.max(W / sky.naturalWidth, (H - HORIZON) / (sky.naturalHeight * (1 - SKY_HORIZON_FRAC)));
+        const s = Math.max(
+          W / sky.naturalWidth,
+          (H - HORIZON) / (sky.naturalHeight * (1 - SKY_HORIZON_FRAC)),
+        );
         const iw = sky.naturalWidth * s;
         const ih = sky.naturalHeight * s;
         ctx.drawImage(sky, (W - iw) / 2, HORIZON - ih * SKY_HORIZON_FRAC, iw, ih);
@@ -150,7 +157,12 @@ export function RoadScene({ width, mode, scene }: Props) {
       ctx.restore();
 
       // Edge lines
-      const lineColor = sc === "minimal" ? "rgba(80,230,220,0.9)" : night ? "rgba(235,240,240,0.85)" : "rgba(250,250,250,0.95)";
+      const lineColor =
+        sc === "minimal"
+          ? "rgba(80,230,220,0.9)"
+          : night
+            ? "rgba(235,240,240,0.85)"
+            : "rgba(250,250,250,0.95)";
       for (const side of [-1, 1]) {
         ctx.beginPath();
         ctx.moveTo(CX + side * 0.5, HORIZON);
@@ -285,10 +297,61 @@ export function RoadScene({ width, mode, scene }: Props) {
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, W, H);
 
+      if (running) {
+        raf = requestAnimationFrame(frame);
+      }
+    };
+
+    const startAnimation = () => {
+      if (disposed || running || document.visibilityState === "hidden") return;
+      running = true;
+      last = performance.now();
       raf = requestAnimationFrame(frame);
     };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+
+    const stopAnimation = () => {
+      running = false;
+      cancelAnimationFrame(raf);
+      raf = 0;
+      last = performance.now();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        startAnimation();
+      } else {
+        stopAnimation();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    void App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) {
+        startAnimation();
+      } else {
+        stopAnimation();
+      }
+    })
+      .then((handle) => {
+        if (disposed) {
+          void handle.remove();
+        } else {
+          appHandle = handle;
+        }
+      })
+      .catch((error) => {
+        console.warn("[RoadScene] App lifecycle listener unavailable", error);
+      });
+
+    startAnimation();
+
+    return () => {
+      disposed = true;
+      stopAnimation();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (appHandle) void appHandle.remove();
+    };
   }, []);
 
   return (

@@ -1,9 +1,9 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 export const GAUGE_MAX = 260;
-export const GAUGE_SWEEP = 270; // degrees, from -135 to +135
+export const GAUGE_SWEEP = 270;
 
-/** Map a speed (km/h) to a needle angle in degrees, 0 at 12 o'clock. Clamped to 0..260. */
 export function speedToAngle(speed: number): number {
   const s = Math.max(0, Math.min(GAUGE_MAX, speed));
   return -GAUGE_SWEEP / 2 + (s / GAUGE_MAX) * GAUGE_SWEEP;
@@ -12,20 +12,19 @@ export function speedToAngle(speed: number): number {
 export interface DemoState {
   speed: number;
   target: number;
-  holdLeft: number; // seconds until a new target
+  holdLeft: number;
   heading: number;
 }
 
-/** One step of the clearly-labelled demo driving simulation. Smooth acceleration, no jumps. */
 export function stepDemo(s: DemoState, dt: number, rand: () => number = Math.random): DemoState {
   let { target, holdLeft } = s;
   holdLeft -= dt;
   if (holdLeft <= 0) {
-    target = 35 + rand() * 105; // 35..140 km/h
+    target = 35 + rand() * 105;
     holdLeft = 6 + rand() * 8;
   }
   const diff = target - s.speed;
-  const maxAccel = diff > 0 ? 6 : 9; // km/h per second
+  const maxAccel = diff > 0 ? 6 : 9;
   const change = Math.sign(diff) * Math.min(Math.abs(diff), maxAccel * dt);
   const heading = (s.heading + (rand() - 0.5) * 2 * dt + 360) % 360;
   return { speed: Math.max(0, s.speed + change), target, holdLeft, heading };
@@ -61,13 +60,27 @@ interface DriveStore {
   resetTrip: () => void;
 }
 
-export const useDrive = create<DriveStore>()((set) => ({
-  speed: 0,
-  heading: 30,
-  hasHeading: true,
-  distanceKm: 0,
-  drivingSec: 0,
-  gps: "off",
-  patch: (p) => set(p),
-  resetTrip: () => set({ distanceKm: 0, drivingSec: 0 }),
-}));
+export const useDrive = create<DriveStore>()(
+  persist(
+    (set) => ({
+      speed: 0,
+      heading: 30,
+      hasHeading: false,
+      distanceKm: 0,
+      drivingSec: 0,
+      gps: "off",
+      patch: (p) => set(p),
+      resetTrip: () => set({ distanceKm: 0, drivingSec: 0 }),
+    }),
+    {
+      name: "gardenia-drive-trip",
+      storage: createJSONStorage(() => localStorage),
+      version: 1,
+      partialize: (s) =>
+        ({
+          distanceKm: s.distanceKm,
+          drivingSec: s.drivingSec,
+        }) as DriveStore,
+    },
+  ),
+);
